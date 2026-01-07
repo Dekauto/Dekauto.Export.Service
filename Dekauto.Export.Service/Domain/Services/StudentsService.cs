@@ -1,4 +1,4 @@
-﻿using Dekauto.Export.Service.Domain.Entities;
+using Dekauto.Export.Service.Domain.Entities;
 using Dekauto.Export.Service.Domain.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 using OfficeOpenXml;
@@ -22,7 +22,7 @@ namespace Dekauto.Export.Service.Domain.Services
             if (students == null || students.Count == 0) throw new ArgumentNullException(nameof(students));
 
 
-            var stream = new MemoryStream();//Используем временное хранилище
+            var stream = new MemoryStream(); //Используем временное хранилище
 
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
             {
@@ -42,7 +42,7 @@ namespace Dekauto.Export.Service.Domain.Services
                         var entry = archive.CreateEntry($"{student.Surname} {student.Name} {student.Patronymic}.xlsx");
                         using (var entryStream = entry.Open())
                         {
-                            await package.SaveAsAsync(entryStream);//Сохраняем файл
+                            await package.SaveAsAsync(entryStream); //Сохраняем файл
                         }
 
                     }
@@ -65,14 +65,14 @@ namespace Dekauto.Export.Service.Domain.Services
                 throw new FileNotFoundException("Файл шаблона не найден. Обратитесь к администратору");
             }
 
-            var stream = new MemoryStream();//Используем временное хранилище
+            var stream = new MemoryStream(); //Используем временное хранилище
             
             using (var package = new ExcelPackage(new FileInfo(templatePath)))
             {
                 FillExcel(student, package);
-                await package.SaveAsAsync(stream);//Сохраняем файл
+                await package.SaveAsAsync(stream); //Сохраняем файл
             }
-            stream.Position = 0;//Сбрасываем позицию
+            stream.Position = 0; //Сбрасываем позицию
             return stream;
         }
         public void FillExcel(Student student, ExcelPackage package) 
@@ -82,7 +82,7 @@ namespace Dekauto.Export.Service.Domain.Services
                 throw new InvalidOperationException("Файл шаблона не содержит листов");
             }
 
-            var worksheet = package.Workbook.Worksheets[0];//Выбираем первый лист
+            var worksheet = package.Workbook.Worksheets[0]; //Выбираем первый лист
 
             //Персональные данные
             worksheet.Cells["B4"].Value = student.Name;
@@ -182,6 +182,271 @@ namespace Dekauto.Export.Service.Domain.Services
             worksheet.Cells["G85"].Value = student.EducationRelationNum;
             worksheet.Cells["I85"].Value = student.EducationRelationDate;
 
+            //Заполнение данных дисциплин
+            FillDisciplineData(student, package);
+
+        }
+
+        private void FillDisciplineData(Student student, ExcelPackage package)
+        {
+            if (student.DisciplineResults == null || student.DisciplineResults.Count == 0)
+                return;
+
+            if (!student.EducationStartYear.HasValue)
+                return;
+
+            // Листы курсов: Ро_1 курс, Ро_2 курс, Ро_3 курс, Ро_4 курс
+            var courseSheetNames = new[] { "Ро_1 курс", "Ро_2 курс", "Ро_3 курс", "Ро_4 курс" };
+
+            for (int courseIndex = 0; courseIndex < courseSheetNames.Length; courseIndex++)
+            {
+                var sheetName = courseSheetNames[courseIndex];
+                
+                // Сначала пытаемся найти лист по точному имени
+                var worksheet = package.Workbook.Worksheets[sheetName];
+                
+                // Если не нашли, пытаемся найти по частичному совпадению
+                if (worksheet == null)
+                {
+                    worksheet = package.Workbook.Worksheets.FirstOrDefault(ws => 
+                        ws.Name.Contains(sheetName, StringComparison.OrdinalIgnoreCase) ||
+                        sheetName.Contains(ws.Name, StringComparison.OrdinalIgnoreCase));
+                }
+                
+                if (worksheet == null)
+                    continue;
+
+                var courseNumber = courseIndex + 1;
+                
+                // Вычисляем номер курса на основе Year дисциплины и EducationStartYear
+                // Year - это год начала учебного года для курса (или год, когда дисциплина была пройдена)
+                // Если Year < EducationStartYear, относим к 1 курсу
+                // Если Year >= EducationStartYear, курс = (Year - EducationStartYear) + 1
+                var disciplinesForCourse = student.DisciplineResults
+                    .Where(d => 
+                    {
+                        if (!d.Year.HasValue)
+                            return false;
+                        
+                        short disciplineYear = d.Year.Value;
+                        short startYear = student.EducationStartYear.Value;
+                        
+                        // Вычисляем курс для дисциплины
+                        short disciplineCourse;
+                        if (disciplineYear < startYear)
+                        {
+                            // Если год дисциплины меньше года начала обучения, относим к 1 курсу
+                            disciplineCourse = 1;
+                        }
+                        else
+                        {
+                            // Курс = разница в годах + 1
+                            disciplineCourse = (short)(disciplineYear - startYear + 1);
+                        }
+                        
+                        return disciplineCourse == courseNumber;
+                    })
+                    .ToList();
+
+                if (disciplinesForCourse.Count == 0)
+                    continue;
+
+                // Группируем по семестрам
+                var oddSemesterDisciplines = disciplinesForCourse
+                    .Where(d => d.Semester.HasValue && d.Semester.Value % 2 == 1)
+                    .OrderBy(d => d.Semester)
+                    .ToList();
+
+                var evenSemesterDisciplines = disciplinesForCourse
+                    .Where(d => d.Semester.HasValue && d.Semester.Value % 2 == 0)
+                    .OrderBy(d => d.Semester)
+                    .ToList();
+
+                // Заполняем нечетные семестры (строки 9-21)
+                FillSemesterDisciplines(worksheet, oddSemesterDisciplines, startRow: 9, endRow: 21);
+
+                // Заполняем четные семестры (строки 39-51)
+                FillSemesterDisciplines(worksheet, evenSemesterDisciplines, startRow: 39, endRow: 51);
+
+                // Заполняем курсовые работы
+                FillCourseWork(worksheet, oddSemesterDisciplines, nameRow: 25, scoreRow: 24);
+                FillCourseWork(worksheet, evenSemesterDisciplines, nameRow: 55, scoreRow: 54);
+
+                // Заполняем даты семестров
+                FillSemesterDates(worksheet, oddSemesterDisciplines, evenSemesterDisciplines);
+            }
+        }
+
+        private void FillSemesterDisciplines(OfficeOpenXml.ExcelWorksheet worksheet, List<StudentDisciplineResult> disciplines, int startRow, int endRow)
+        {
+            int currentRow = startRow;
+            var regularDisciplines = disciplines
+                .Where(d => d.ControlType?.ToLower().Trim() != "курсовая")
+                .ToList();
+
+            foreach (var discipline in regularDisciplines.Take(endRow - startRow + 1))
+            {
+                // Столбец 2: название дисциплины
+                worksheet.Cells[currentRow, 2].Value = discipline.DisciplineName;
+
+                // Столбец 3: зачетные единицы
+                if (discipline.CreditUnits.HasValue)
+                    worksheet.Cells[currentRow, 3].Value = discipline.CreditUnits.Value;
+
+                // Столбец 5: аудиторные часы
+                if (discipline.AudHours.HasValue)
+                    worksheet.Cells[currentRow, 5].Value = discipline.AudHours.Value;
+
+                // Столбец 7: форма аттестации (практика заменяется на "зачёт с оценкой")
+                var controlTypeForDisplay = discipline.ControlType?.ToLower().Trim() == "практика" 
+                    ? "зачёт с оценкой" 
+                    : discipline.ControlType;
+                worksheet.Cells[currentRow, 7].Value = controlTypeForDisplay;
+
+                // Столбец 8: оценка
+                if (discipline.Score.HasValue)
+                    worksheet.Cells[currentRow, 8].Value = discipline.Score.Value;
+
+                // Столбец 9: интерпретация
+                worksheet.Cells[currentRow, 9].Value = GetInterpretation(discipline.Score, discipline.ControlType);
+
+                // Столбец 10: документ ("В" если есть данные)
+                if (HasDisciplineData(discipline))
+                    worksheet.Cells[currentRow, 10].Value = "В";
+
+                currentRow++;
+            }
+        }
+
+        private string GetInterpretation(double? score, string? controlType)
+        {
+            if (!score.HasValue || string.IsNullOrEmpty(controlType))
+                return string.Empty;
+
+            var scoreValue = score.Value;
+            var controlTypeLower = controlType.ToLower().Trim();
+
+            // Формы зачета/с оценкой (учитываем варианты написания: зачет, зачёт, зачет с оценкой, зачёт с оценкой)
+            // Практика обрабатывается как зачет с оценкой
+            if (controlTypeLower == "зачет" || controlTypeLower == "зачёт" || 
+                controlTypeLower == "зачет с оценкой" || controlTypeLower == "зачёт с оценкой" ||
+                controlTypeLower == "практика")
+            {
+                if (scoreValue >= 13 && scoreValue <= 15)
+                    return "зачтено (5, отлично)";
+                else if (scoreValue >= 10 && scoreValue <= 12)
+                    return "зачтено (4, хорошо)";
+                else if (scoreValue >= 7 && scoreValue <= 9)
+                    return "зачтено (3, удовлетворительно)";
+                else if (scoreValue < 7)
+                    return "не зачтено (2, не удовлетворительно)";
+            }
+            // Формы не зачета (экзамен, контрольная)
+            else if (controlTypeLower == "экзамен" || controlTypeLower == "контрольная")
+            {
+                if (scoreValue >= 13 && scoreValue <= 15)
+                    return "5, отлично";
+                else if (scoreValue >= 10 && scoreValue <= 12)
+                    return "4, хорошо";
+                else if (scoreValue >= 7 && scoreValue <= 9)
+                    return "3, удовлетворительно";
+                else if (scoreValue < 7)
+                    return "2, не удовлетворительно";
+            }
+
+            return string.Empty;
+        }
+
+        private bool HasDisciplineData(StudentDisciplineResult discipline)
+        {
+            return !string.IsNullOrEmpty(discipline.DisciplineName) ||
+                   discipline.Score.HasValue ||
+                   discipline.CreditUnits.HasValue ||
+                   !string.IsNullOrEmpty(discipline.ControlType);
+        }
+
+        private void FillCourseWork(OfficeOpenXml.ExcelWorksheet worksheet, List<StudentDisciplineResult> disciplines, int nameRow, int scoreRow)
+        {
+            var courseWork = disciplines
+                .FirstOrDefault(d => d.ControlType?.ToLower().Trim() == "курсовая");
+
+            if (courseWork != null && !string.IsNullOrEmpty(courseWork.DisciplineName))
+            {
+                // Название курсовой работы в объединенных ячейках столбцов 3-12
+                var cellRange = worksheet.Cells[nameRow, 3, nameRow, 12];
+                if (!cellRange.Merge)
+                {
+                    cellRange.Merge = true;
+                }
+                worksheet.Cells[nameRow, 3].Value = courseWork.DisciplineName;
+
+                // Оценка в строке scoreRow на столбце 8
+                if (courseWork.Score.HasValue)
+                {
+                    worksheet.Cells[scoreRow, 8].Value = courseWork.Score.Value;
+                }
+
+                // Интерпретация в строке scoreRow на столбце 9 (как для не-зачета: экзамен, контрольная)
+                var interpretation = GetInterpretationForNonCredit(courseWork.Score);
+                if (!string.IsNullOrEmpty(interpretation))
+                {
+                    worksheet.Cells[scoreRow, 9].Value = interpretation;
+                }
+            }
+        }
+
+        private string GetInterpretationForNonCredit(double? score)
+        {
+            if (!score.HasValue)
+                return string.Empty;
+
+            var scoreValue = score.Value;
+
+            // Интерпретация как для экзамена/контрольной (не-зачета)
+            if (scoreValue >= 13 && scoreValue <= 15)
+                return "5, отлично";
+            else if (scoreValue >= 10 && scoreValue <= 12)
+                return "4, хорошо";
+            else if (scoreValue >= 7 && scoreValue <= 9)
+                return "3, удовлетворительно";
+            else if (scoreValue < 7)
+                return "2, не удовлетворительно";
+
+            return string.Empty;
+        }
+
+        private void FillSemesterDates(OfficeOpenXml.ExcelWorksheet worksheet, List<StudentDisciplineResult> oddSemesterDisciplines, List<StudentDisciplineResult> evenSemesterDisciplines)
+        {
+            // Получаем Year из дисциплин для формирования дат
+            // Формат даты: "YYYY-YYYY" где первая часть - год нечетного семестра, вторая - четного
+            short? year = null;
+            
+            // Берем Year из любой дисциплины (они должны быть одного года для курса)
+            var allDisciplines = oddSemesterDisciplines.Concat(evenSemesterDisciplines).ToList();
+            year = allDisciplines.FirstOrDefault()?.Year;
+
+            if (!year.HasValue)
+                return;
+
+            // Формируем дату в формате "YYYY-YYYY"
+            // Учебный год: YYYY (осень) - YYYY+1 (весна)
+            string dateFormat = $"{year.Value}-{year.Value + 1}";
+
+            // Строка 3 для нечетного семестра, столбцы 8-9
+            var oddDateRange = worksheet.Cells[3, 8, 3, 9];
+            if (!oddDateRange.Merge)
+            {
+                oddDateRange.Merge = true;
+            }
+            worksheet.Cells[3, 8].Value = dateFormat;
+
+            // Строка 33 для четного семестра, столбцы 8-9
+            var evenDateRange = worksheet.Cells[33, 8, 33, 9];
+            if (!evenDateRange.Merge)
+            {
+                evenDateRange.Merge = true;
+            }
+            worksheet.Cells[33, 8].Value = dateFormat;
         }
     }
 }

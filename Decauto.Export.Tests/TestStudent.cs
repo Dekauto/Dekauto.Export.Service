@@ -1,4 +1,4 @@
-﻿using Dekauto.Export.Service.API.Controllers;
+using Dekauto.Export.Service.API.Controllers;
 using Dekauto.Export.Service.Domain.Entities;
 using Dekauto.Export.Service.Domain.Interfaces;
 using Microsoft.AspNetCore.Http;
@@ -12,13 +12,15 @@ namespace Dekauto.Export.Tests
     public class TestStudent
     {
         private Mock<IStudentsService> _studentsService;
+        private Mock<ILogger<StudentCardsController>> _logger;
         private StudentCardsController _controller;
 
         [TestInitialize]
         public void Setup() 
         {
             _studentsService = new Mock<IStudentsService>();
-            _controller = new StudentCardsController(_studentsService.Object);
+            _logger = new Mock<ILogger<StudentCardsController>>();
+            _controller = new StudentCardsController(_studentsService.Object, _logger.Object);
         }
 
         [TestMethod]

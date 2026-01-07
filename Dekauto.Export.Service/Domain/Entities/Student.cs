@@ -77,5 +77,6 @@
         public string? EducationRelationNum { get; set; } // Номер отношений с учебным заведением +
         public DateOnly? EducationRelationDate { get; set; } // Дата начала отношений с учебным заведением +
 
+        public List<StudentDisciplineResult> DisciplineResults { get; set; } = new(); // Список дисциплин +
     }
 }
