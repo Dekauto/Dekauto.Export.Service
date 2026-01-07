@@ -8,6 +8,7 @@ on:
 # чек
 jobs:
   build:
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment: dekauto
 
