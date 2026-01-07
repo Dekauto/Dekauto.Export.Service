@@ -22,7 +22,7 @@ namespace Dekauto.Export.Service.Domain.Services
             if (students == null || students.Count == 0) throw new ArgumentNullException(nameof(students));
 
 
-            var stream = new MemoryStream();//Используем временное хранилище
+            var stream = new MemoryStream(); //Используем временное хранилище
 
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, true))
             {
@@ -42,7 +42,7 @@ namespace Dekauto.Export.Service.Domain.Services
                         var entry = archive.CreateEntry($"{student.Surname} {student.Name} {student.Patronymic}.xlsx");
                         using (var entryStream = entry.Open())
                         {
-                            await package.SaveAsAsync(entryStream);//Сохраняем файл
+                            await package.SaveAsAsync(entryStream); //Сохраняем файл
                         }
 
                     }
@@ -65,14 +65,14 @@ namespace Dekauto.Export.Service.Domain.Services
                 throw new FileNotFoundException("Файл шаблона не найден. Обратитесь к администратору");
             }
 
-            var stream = new MemoryStream();//Используем временное хранилище
+            var stream = new MemoryStream(); //Используем временное хранилище
             
             using (var package = new ExcelPackage(new FileInfo(templatePath)))
             {
                 FillExcel(student, package);
-                await package.SaveAsAsync(stream);//Сохраняем файл
+                await package.SaveAsAsync(stream); //Сохраняем файл
             }
-            stream.Position = 0;//Сбрасываем позицию
+            stream.Position = 0; //Сбрасываем позицию
             return stream;
         }
         public void FillExcel(Student student, ExcelPackage package) 
@@ -82,7 +82,7 @@ namespace Dekauto.Export.Service.Domain.Services
                 throw new InvalidOperationException("Файл шаблона не содержит листов");
             }
 
-            var worksheet = package.Workbook.Worksheets[0];//Выбираем первый лист
+            var worksheet = package.Workbook.Worksheets[0]; //Выбираем первый лист
 
             //Персональные данные
             worksheet.Cells["B4"].Value = student.Name;
