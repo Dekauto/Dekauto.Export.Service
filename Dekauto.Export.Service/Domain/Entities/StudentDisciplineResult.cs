@@ -1,4 +1,4 @@
-namespace Dekauto.Import.Service.Domain.Entities
+namespace Dekauto.Export.Service.Domain.Entities
 {
     public class StudentDisciplineResult
     {
@@ -8,7 +8,7 @@ namespace Dekauto.Import.Service.Domain.Entities
         public short? Year { get; set; }
         public string? ControlType { get; set; }
 
-        public int? AcademicHours { get; set; }
+        public double? AudHours { get; set; }
         public double? CreditUnits { get; set; }
     }
 }
