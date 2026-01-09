@@ -8,7 +8,6 @@ using Prometheus;
 using Serilog;
 using Serilog.Events;
 using Serilog.Sinks.Loki;
-using System.Text;
 
 var tempOutputTemplate = "[EXPORT STARTUP LOGGER] {Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}";
 // Временные логгер Serilog для этапа до создания билдера
@@ -30,6 +29,14 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     var builder = WebApplication.CreateBuilder(args);
+    // Применение конфигов.
+    builder.Configuration
+        .SetBasePath(Directory.GetCurrentDirectory())
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+        .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true)
+        .AddJsonFile($"appsettings.{Environment.UserName.ToLowerInvariant()}.json", optional: true, reloadOnChange: true)
+        .AddEnvironmentVariables()
+        .AddCommandLine(args);
 
     // Add services to the container.
 
