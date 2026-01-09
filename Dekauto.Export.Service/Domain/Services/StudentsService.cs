@@ -218,30 +218,45 @@ namespace Dekauto.Export.Service.Domain.Services
 
                 var courseNumber = courseIndex + 1;
                 
-                // Вычисляем номер курса на основе Year дисциплины и EducationStartYear
-                // Year - это год начала учебного года для курса (или год, когда дисциплина была пройдена)
-                // Если Year < EducationStartYear, относим к 1 курсу
-                // Если Year >= EducationStartYear, курс = (Year - EducationStartYear) + 1
+                // Вычисляем номер курса на основе Year дисциплины, Semester и EducationStartYear
+                // Учебный год начинается осенью:
+                // - Нечетный семестр (1, 3, 5...) в году Y → учебный год Y-Y+1
+                // - Четный семестр (2, 4, 6...) в году Y → учебный год Y-1-Y
+                // Курс определяется по году начала учебного года
                 var disciplinesForCourse = student.DisciplineResults
                     .Where(d => 
                     {
-                        if (!d.Year.HasValue)
+                        if (!d.Year.HasValue || !d.Semester.HasValue)
                             return false;
                         
                         short disciplineYear = d.Year.Value;
+                        short semester = d.Semester.Value;
                         short startYear = student.EducationStartYear.Value;
+                        
+                        // Определяем год начала учебного года для этой дисциплины
+                        short academicYearStart;
+                        if (semester % 2 == 1) // Нечетный семестр (осень)
+                        {
+                            // Учебный год начинается в этом же году
+                            academicYearStart = disciplineYear;
+                        }
+                        else // Четный семестр (весна)
+                        {
+                            // Учебный год начался в предыдущем году
+                            academicYearStart = (short)(disciplineYear - 1);
+                        }
                         
                         // Вычисляем курс для дисциплины
                         short disciplineCourse;
-                        if (disciplineYear < startYear)
+                        if (academicYearStart < startYear)
                         {
-                            // Если год дисциплины меньше года начала обучения, относим к 1 курсу
+                            // Если год начала учебного года меньше года начала обучения, относим к 1 курсу
                             disciplineCourse = 1;
                         }
                         else
                         {
-                            // Курс = разница в годах + 1
-                            disciplineCourse = (short)(disciplineYear - startYear + 1);
+                            // Курс = разница в годах начала учебного года + 1
+                            disciplineCourse = (short)(academicYearStart - startYear + 1);
                         }
                         
                         return disciplineCourse == courseNumber;
@@ -417,36 +432,49 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private void FillSemesterDates(OfficeOpenXml.ExcelWorksheet worksheet, List<StudentDisciplineResult> oddSemesterDisciplines, List<StudentDisciplineResult> evenSemesterDisciplines)
         {
-            // Получаем Year из дисциплин для формирования дат
-            // Формат даты: "YYYY-YYYY" где первая часть - год нечетного семестра, вторая - четного
-            short? year = null;
+            // Формат даты: "YYYY-YYYY" где первая часть - год начала учебного года (осень), вторая - конец (весна)
+            short? oddYearStart = null;
+            short? evenYearStart = null;
             
-            // Берем Year из любой дисциплины (они должны быть одного года для курса)
-            var allDisciplines = oddSemesterDisciplines.Concat(evenSemesterDisciplines).ToList();
-            year = allDisciplines.FirstOrDefault()?.Year;
-
-            if (!year.HasValue)
-                return;
-
-            // Формируем дату в формате "YYYY-YYYY"
-            // Учебный год: YYYY (осень) - YYYY+1 (весна)
-            string dateFormat = $"{year.Value}-{year.Value + 1}";
-
-            // Строка 3 для нечетного семестра, столбцы 8-9
-            var oddDateRange = worksheet.Cells[3, 8, 3, 9];
-            if (!oddDateRange.Merge)
+            // Определяем год начала учебного года для нечетного семестра
+            var oddDiscipline = oddSemesterDisciplines.FirstOrDefault();
+            if (oddDiscipline != null && oddDiscipline.Year.HasValue && oddDiscipline.Semester.HasValue)
             {
-                oddDateRange.Merge = true;
+                // Нечетный семестр (осень) - учебный год начинается в этом же году
+                oddYearStart = oddDiscipline.Year.Value;
             }
-            worksheet.Cells[3, 8].Value = dateFormat;
-
-            // Строка 33 для четного семестра, столбцы 8-9
-            var evenDateRange = worksheet.Cells[33, 8, 33, 9];
-            if (!evenDateRange.Merge)
+            
+            // Определяем год начала учебного года для четного семестра
+            var evenDiscipline = evenSemesterDisciplines.FirstOrDefault();
+            if (evenDiscipline != null && evenDiscipline.Year.HasValue && evenDiscipline.Semester.HasValue)
             {
-                evenDateRange.Merge = true;
+                // Четный семестр (весна) - учебный год начался в предыдущем году
+                evenYearStart = (short)(evenDiscipline.Year.Value - 1);
             }
-            worksheet.Cells[33, 8].Value = dateFormat;
+            
+            // Формируем дату для нечетного семестра (строка 3)
+            if (oddYearStart.HasValue)
+            {
+                string oddDateFormat = $"{oddYearStart.Value}-{oddYearStart.Value + 1}";
+                var oddDateRange = worksheet.Cells[3, 8, 3, 9];
+                if (!oddDateRange.Merge)
+                {
+                    oddDateRange.Merge = true;
+                }
+                worksheet.Cells[3, 8].Value = oddDateFormat;
+            }
+            
+            // Формируем дату для четного семестра (строка 33)
+            if (evenYearStart.HasValue)
+            {
+                string evenDateFormat = $"{evenYearStart.Value}-{evenYearStart.Value + 1}";
+                var evenDateRange = worksheet.Cells[33, 8, 33, 9];
+                if (!evenDateRange.Merge)
+                {
+                    evenDateRange.Merge = true;
+                }
+                worksheet.Cells[33, 8].Value = evenDateFormat;
+            }
         }
     }
 }
