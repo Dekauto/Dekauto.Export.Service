@@ -2,8 +2,6 @@
 using Dekauto.Export.Service.Domain.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Net.Http.Headers;
-using Serilog;
 
 namespace Dekauto.Export.Service.API.Controllers
 {
@@ -12,12 +10,12 @@ namespace Dekauto.Export.Service.API.Controllers
     [Authorize]
     public class StudentCardsController : ControllerBase
     {
-        private readonly IStudentsService studentsService;
+        private readonly IStudentsCardService studentsService;
         private string defaultLatFileName = "exported_student_card";
         private readonly ILogger<StudentCardsController> logger;
-        public StudentCardsController(IStudentsService studentsService, ILogger<StudentCardsController> logger) 
+        public StudentCardsController(IStudentsCardService studentsService, ILogger<StudentCardsController> logger)
         {
-            this.studentsService = studentsService??throw new ArgumentNullException();
+            this.studentsService = studentsService ?? throw new ArgumentNullException();
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -37,7 +35,7 @@ namespace Dekauto.Export.Service.API.Controllers
         }
 
         [HttpPost("student")]
-        public async Task<IActionResult> ExportStudentAsync([FromBody] Student student) 
+        public async Task<IActionResult> ExportStudentAsync([FromBody] Student student)
         {
             try
             {
@@ -50,7 +48,7 @@ namespace Dekauto.Export.Service.API.Controllers
                 // Возвращаем файл БЕЗ указания имени в третьем параметре
                 return File(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
                 logger.LogError(ex, $"Ошибка при экспорте студента {student.Surname} {student.Name}: {ex.Message}");
                 return HandleException(ex);
@@ -69,15 +67,15 @@ namespace Dekauto.Export.Service.API.Controllers
                 SetHeaderFileNames(defaultLatFileName, fileName);
                 return File(stream, "application/zip");
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
                 logger.LogError(ex, $"Ошибка при групповом экспорте: {ex.Message}");
                 return HandleException(ex);
             }
         }
-        private IActionResult HandleException(Exception ex) 
+        private IActionResult HandleException(Exception ex)
         {
-            switch (ex) 
+            switch (ex)
             {
                 case ArgumentNullException argumentNullException:
                     return BadRequest(argumentNullException.Message);

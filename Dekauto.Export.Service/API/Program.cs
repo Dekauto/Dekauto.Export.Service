@@ -91,7 +91,7 @@ try
         }
         });
     });
-    builder.Services.AddTransient<IStudentsService, StudentsService>();
+    builder.Services.AddTransient<IStudentsCardService, StudentsCardService>();
     builder.Services.AddSingleton<IRequestMetricsService, RequestMetricsService>();
 
     if (Boolean.Parse(builder.Configuration["UseEndpointAuth"] ?? "true"))

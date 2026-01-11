@@ -11,14 +11,14 @@ namespace Dekauto.Export.Tests
     [TestClass]
     public class TestStudent
     {
-        private Mock<IStudentsService> _studentsService;
+        private Mock<IStudentsCardService> _studentsService;
         private Mock<ILogger<StudentCardsController>> _logger;
         private StudentCardsController _controller;
 
         [TestInitialize]
         public void Setup() 
         {
-            _studentsService = new Mock<IStudentsService>();
+            _studentsService = new Mock<IStudentsCardService>();
             _logger = new Mock<ILogger<StudentCardsController>>();
             _controller = new StudentCardsController(_studentsService.Object, _logger.Object);
         }
