@@ -1,7 +1,9 @@
-﻿namespace Dekauto.Export.Service.Domain.Interfaces
+﻿using Dekauto.Export.Service.Domain.Entities.DTO;
+
+namespace Dekauto.Export.Service.Domain.Interfaces
 {
     public interface IDiplomaSupplementExportService
     {
-        //ChooseTemplateFile();
+        public Task<(MemoryStream, string)> ExportDiplomaSupplement(DiplomaSupplementExportRequest request);
     }
 }
