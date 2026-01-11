@@ -1,9 +1,9 @@
-﻿using System.Collections.Concurrent;
-using Dekauto.Export.Service.Domain.Interfaces;
+﻿using Dekauto.Export.Service.Domain.Interfaces;
+using System.Collections.Concurrent;
 
-namespace Dekauto.Export.Service.Domain.Services.Metric
+namespace Dekauto.Export.Service.Domain.Services.Metrics
 {
-    public class RequestMetricsService:IRequestMetricsService
+    public class RequestMetricsService : IRequestMetricsService
     {
         private Timer counterTimer;
         private ConcurrentQueue<int> counterQueue; // Потокобезопасная очередь
@@ -17,7 +17,7 @@ namespace Dekauto.Export.Service.Domain.Services.Metric
             this.config = config;
             period = config.GetValue<int?>("Metrics:RequestCounter:Seconds") ?? 60;
 
-            if (this.counterQueue == null) this.counterQueue = new ConcurrentQueue<int>();
+            if (counterQueue == null) counterQueue = new ConcurrentQueue<int>();
 
             counterTimer = MakeCounterTimer();
         }
@@ -31,7 +31,7 @@ namespace Dekauto.Export.Service.Domain.Services.Metric
         private void SaveAndResetCounter(object? state)
         {
             // Если уже много значений, то убираем последнее
-            if (this.counterQueue.Count >= maxPrevCounters)
+            if (counterQueue.Count >= maxPrevCounters)
             {
                 counterQueue.TryDequeue(out _);
             }

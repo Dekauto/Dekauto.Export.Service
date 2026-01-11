@@ -1,6 +1,6 @@
 ﻿using Dekauto.Export.Service.Domain.Interfaces;
 using Dekauto.Export.Service.Domain.Services;
-using Dekauto.Export.Service.Domain.Services.Metric;
+using Dekauto.Export.Service.Domain.Services.Metrics;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi.Models;
@@ -93,6 +93,7 @@ try
     });
     builder.Services.AddTransient<IStudentsCardService, StudentsCardService>();
     builder.Services.AddSingleton<IRequestMetricsService, RequestMetricsService>();
+    builder.Services.AddSingleton<IDiplomaSupplementExportService, DiplomaSupplementExportService>();
 
     if (Boolean.Parse(builder.Configuration["UseEndpointAuth"] ?? "true"))
     {

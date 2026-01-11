@@ -1,7 +1,6 @@
-﻿
-using Dekauto.Export.Service.Domain.Interfaces;
+﻿using Dekauto.Export.Service.Domain.Interfaces;
 
-namespace Dekauto.Export.Service.Domain.Services.Metric
+namespace Dekauto.Export.Service.Domain.Services.Metrics
 {
     public class MetricsMiddleware
     {
