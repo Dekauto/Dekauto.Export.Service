@@ -82,10 +82,18 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private string FormatDate(DateOnly date)
         {
-            var culture = new CultureInfo("ru-RU");
-            return date.ToString("d MMMM yyyy 'года'", culture);
-        }
+            // Массив названий месяцев в родительном падеже
+            string[] monthsGenitive =
+            {
+                "января", "февраля", "марта", "апреля", "мая", "июня",
+                "июля", "августа", "сентября", "октября", "ноября", "декабря"
+            };
 
+            // date.Month возвращает от 1 до 12, поэтому вычитаем 1 для индекса
+            string monthName = monthsGenitive[date.Month - 1];
+
+            return $"{date.Day} {monthName} {date.Year} года";
+        }
         public async Task<(MemoryStream, string)> ExportDiplomaSupplement(DiplomaSupplementExportRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);
