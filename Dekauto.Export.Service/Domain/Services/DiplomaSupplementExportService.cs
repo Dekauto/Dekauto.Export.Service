@@ -82,10 +82,18 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private string FormatDate(DateOnly date)
         {
-            var culture = new CultureInfo("ru-RU");
-            return date.ToString("d MMMM yyyy 'года'", culture);
-        }
+            // Массив названий месяцев в родительном падеже
+            string[] monthsGenitive =
+            {
+                "января", "февраля", "марта", "апреля", "мая", "июня",
+                "июля", "августа", "сентября", "октября", "ноября", "декабря"
+            };
 
+            // date.Month возвращает от 1 до 12, поэтому вычитаем 1 для индекса
+            string monthName = monthsGenitive[date.Month - 1];
+
+            return $"{date.Day} {monthName} {date.Year} года";
+        }
         public async Task<(MemoryStream, string)> ExportDiplomaSupplement(DiplomaSupplementExportRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);
@@ -94,10 +102,10 @@ namespace Dekauto.Export.Service.Domain.Services
             var (templatePath, e1, m1) = ChooseTemplateFile(request.manufacturer, request.educationLevel);
             _logger.LogInformation($"Найден файл шаблона: {m1}, {e1}");
 
-            var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.supplementData);
+            var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.data);
             _logger.LogInformation($"Приложение диплома сформировано.");
 
-            string fileName = $"Приложение диплома {request.supplementData.Surname} {request.supplementData.Name} {request.supplementData.Patronymic} {m1} {e1}";
+            string fileName = $"Приложение диплома {request.data.Surname} {request.data.Name} {request.data.Patronymic} {m1} {e1}";
 
             return (diplomaFile, fileName);
         }
