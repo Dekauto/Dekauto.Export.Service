@@ -184,6 +184,9 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             activeWorksheet = sheet;
 
+            // Снимаем защиту, если она есть
+            sheet.Protection.IsProtected = false;
+
             if (data is null || data.DiplomaWithHonors is null)
             {
                 _logger.LogWarning("Статус диплома \"с отличием\" не найден, пропускаем...");
@@ -199,6 +202,9 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             activeWorksheet = sheet;
 
+            // Снимаем защиту, если она есть
+            sheet.Protection.IsProtected = false;
+
             SetCellValue("B3", data.Surname);
             SetCellValue("B4", data.Name);
             SetCellValue("B5", data.Patronymic);
@@ -211,17 +217,19 @@ namespace Dekauto.Export.Service.Domain.Services
         private void FillProgramMasteringSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
         {
             activeWorksheet = sheet;
-            _logger.LogInformation("Очистка содержимого (B-D) листа освоения программы...");
+            _logger.LogInformation("Заполнение листа освоения программы...");
 
-            // 1. Очистка диапазона данных (строки 2-140, только колонки B, C, D)
-            // Столбец A (№ п/п) и E (скрытый) не трогаем, Шапку (строка 1) не трогаем.
-            // Используем Value = null, чтобы сохранить границы и шрифт.
+            // 1. Снимаем защиту с листа, чтобы можно было редактировать/удалять комментарии
+            sheet.Protection.IsProtected = false;
+
+            // 2. Очистка диапазона данных (B2:D140)
             sheet.Cells["B2:D140"].Value = null;
+            // Опционально: очистить старые комментарии, чтобы они не накапливались
+            // sheet.Cells["B2:D140"].ClearComments(); 
 
-            // 2. Подготовка и нормализация данных
+            // 3. Подготовка и нормализация данных
             var allResults = data.DisciplineResults ?? new List<StudentDisciplineResult>();
 
-            // Списки для распределения
             var rawPractices = new List<StudentDisciplineResult>();
             var rawGia = new List<StudentDisciplineResult>();
             var rawCourseWorks = new List<StudentDisciplineResult>();
@@ -234,14 +242,24 @@ namespace Dekauto.Export.Service.Domain.Services
                 string controlLower = item.ControlType?.ToLower()?.Trim() ?? "";
 
                 // Логика определения типа
-                // Исключение: "Проектный практикум" считается дисциплиной, а не практикой
                 bool isProjectPractice = nameLower.Contains("проектный практикум");
 
-                if (nameLower.Contains("практик") && !isProjectPractice)
+                // 1. СНАЧАЛА проверяем Курсовые (по типу контроля или маркеру в названии)
+                // Добавили проверку на StartsWith("название дисциплины"), так как парсер так называет курсовые.
+                if (controlLower.Contains("курсовая") ||
+                    nameLower.Contains("курсовая") ||
+                    nameLower.StartsWith("название дисциплины"))
+                {
+                    rawCourseWorks.Add(item);
+                }
+                // 2. ЗАТЕМ проверяем Практики
+                else if ((nameLower.Contains("практик") || nameLower.Contains("научно-исследоват"))
+                         && !isProjectPractice)
                 {
                     rawPractices.Add(item);
                 }
-                else if (nameLower.Contains("государственная") ||
+                // 3. ГИА
+                else if (nameLower.Contains("государственн") ||
                          nameLower.Contains("выпускная") ||
                          nameLower.Contains("квалификационная") ||
                          nameLower.Contains("защита вкр") ||
@@ -249,45 +267,36 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     rawGia.Add(item);
                 }
-                else if (nameLower.Contains("курсовая") || controlLower.Contains("курсовая"))
-                {
-                    rawCourseWorks.Add(item);
-                }
+                // 4. Факультативы
                 else if (nameLower.Contains("факультатив") || nameLower.Contains("спортивного мастерства"))
                 {
                     rawElectives.Add(item);
                 }
+                // 5. Все остальное - Дисциплины
                 else
                 {
                     rawDisciplines.Add(item);
                 }
             }
 
-            // 3. Агрегация и сортировка
-            // Дисциплины и Практики нужно схлопнуть и отсортировать
+            // 4. Агрегация и сортировка
             var disciplines = ProcessDisciplines(rawDisciplines);
             var practices = ProcessDisciplines(rawPractices);
             var electives = ProcessDisciplines(rawElectives);
-
-            // ГИА и Курсовые обычно не схлопываются по семестрам, но для порядка прогоним через сортировку
             var giaResults = ProcessDisciplines(rawGia);
-            var courseWorks = ProcessDisciplines(rawCourseWorks);
+            var courseWorks = ProcessDisciplines(rawCourseWorks); // Курсовые сортируем по семестру
 
-
-            // 4. Подсчет итогов (считаем по обработанным спискам или исходным - математически сумма равна)
-            // Исключаем факультативы из общего объема
+            // 5. Подсчет итогов
             double totalCredits = disciplines.Sum(x => ConvertToDouble(x.CreditUnits))
                                 + practices.Sum(x => ConvertToDouble(x.CreditUnits))
                                 + giaResults.Sum(x => ConvertToDouble(x.CreditUnits));
 
-            // Часы считаем все (включая факультативы? Обычно нет, но по ТЗ "Объем образовательной программы". 
-            // Будем считать аналогично кредитам - без факультативов).
             double totalAudHours = disciplines.Sum(x => ConvertToDouble(x.AudHours))
                                  + practices.Sum(x => ConvertToDouble(x.AudHours))
                                  + giaResults.Sum(x => ConvertToDouble(x.AudHours));
 
 
-            // 5. Последовательная запись блоков
+            // 6. Последовательная запись
             _currentRow = 2; // Данные начинаются со 2-й строки
 
             // Блок 1: Дисциплины
@@ -301,7 +310,6 @@ namespace Dekauto.Export.Service.Domain.Services
             {
                 double practiceCredits = practices.Sum(p => ConvertToDouble(p.CreditUnits));
 
-                // Заголовок
                 WriteDisciplineRow("Практики", $"{practiceCredits} з.е.", null);
                 WriteDisciplineRow("в том числе:", null, null);
 
@@ -321,20 +329,18 @@ namespace Dekauto.Export.Service.Domain.Services
 
                 foreach (var item in giaResults)
                 {
-                    // Для ВКР кредиты обычно не дублируются в строке названия (идут в шапке ГИА)
-                    // Оценка пишется
+                    // Для элементов ГИА пишем название (там уже тема ВКР, если есть) и оценку
+                    // Кредиты для подпунктов ГИА обычно не ставятся
                     WriteDisciplineRow(item.DisciplineName, null, GetGradeText(item));
                 }
             }
 
             // Блок 4: Объем образовательной программы (Итого)
-            // Строго 3 строки
             WriteDisciplineRow("Объем образовательной программы", $"{totalCredits} з.е.", null);
             WriteDisciplineRow("в том числе объем контактной работы обучающихся", null, null);
             WriteDisciplineRow("во взаимодействии с преподавателем в академических часах:", $"{totalAudHours} ак. час.", null);
 
             // Блок 5: Курсовые работы
-            // По ТЗ: "Наименование", Оценка. З.Е. нет (null).
             foreach (var item in courseWorks)
             {
                 WriteDisciplineRow(item.DisciplineName, null, GetGradeText(item));
@@ -363,33 +369,29 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             if (input == null || !input.Any()) return new List<StudentDisciplineResult>();
 
-            var grouped = input
+            return input
                 .GroupBy(d => d.DisciplineName?.Trim(), StringComparer.OrdinalIgnoreCase)
                 .Select(g =>
                 {
-                    // Находим запись с максимальным семестром (или годом) для определения итоговой оценки
+                    // Берем запись с максимальным семестром (или годом)
                     var lastEntry = g.OrderByDescending(x => x.Semester ?? 0)
                                      .ThenByDescending(x => x.Year ?? 0)
                                      .First();
 
                     return new StudentDisciplineResult
                     {
-                        DisciplineName = g.Key, // Используем нормализованное имя
-                        // Суммируем трудоемкость
+                        DisciplineName = g.Key,
                         CreditUnits = g.Sum(x => ConvertToDouble(x.CreditUnits)),
                         AudHours = g.Sum(x => ConvertToDouble(x.AudHours)),
-                        // Данные оценки берем из последнего периода
                         Score = lastEntry.Score,
                         ControlType = lastEntry.ControlType,
                         Semester = lastEntry.Semester,
                         Year = lastEntry.Year
                     };
                 })
-                .OrderBy(x => x.Semester ?? 0) // Сортировка по возрастанию семестра
-                .ThenBy(x => x.DisciplineName) // Вторичная сортировка по алфавиту
+                .OrderBy(x => x.Semester ?? 0)
+                .ThenBy(x => x.DisciplineName)
                 .ToList();
-
-            return grouped;
         }
 
         /// <summary>
