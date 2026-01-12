@@ -356,7 +356,7 @@ namespace Dekauto.Export.Service.Domain.Services
                     return "не зачтено (2, не удовлетворительно)";
             }
             // Формы не зачета (экзамен, контрольная)
-            else if (controlTypeLower == "экзамен" || controlTypeLower == "контрольная")
+            else if (controlTypeLower == "экзамен" || controlTypeLower == "контрольная" || controlTypeLower == "контрольная работа")
             {
                 if (scoreValue >= 13 && scoreValue <= 15)
                     return "5, отлично";
