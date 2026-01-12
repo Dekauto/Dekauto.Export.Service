@@ -11,8 +11,6 @@ WORKDIR /app
 # HTTP и HTTPS порты
 EXPOSE 5505 5506  
 
-ENV ASPNETCORE_ENVIRONMENT=Development
-
 # This stage is used to build the service project
 FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
 ARG BUILD_CONFIGURATION=Debug
@@ -32,5 +30,5 @@ RUN dotnet publish "./Dekauto.Export.Service.csproj" -c $BUILD_CONFIGURATION -o 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-COPY "Templates/card/card_template.xlsx" "Templates/"
+COPY "Templates/" "Templates/"
 ENTRYPOINT ["dotnet", "Dekauto.Export.Service.dll"]

@@ -94,10 +94,10 @@ namespace Dekauto.Export.Service.Domain.Services
             var (templatePath, e1, m1) = ChooseTemplateFile(request.manufacturer, request.educationLevel);
             _logger.LogInformation($"Найден файл шаблона: {m1}, {e1}");
 
-            var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.supplementData);
+            var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.data);
             _logger.LogInformation($"Приложение диплома сформировано.");
 
-            string fileName = $"Приложение диплома {request.supplementData.Surname} {request.supplementData.Name} {request.supplementData.Patronymic} {m1} {e1}";
+            string fileName = $"Приложение диплома {request.data.Surname} {request.data.Name} {request.data.Patronymic} {m1} {e1}";
 
             return (diplomaFile, fileName);
         }
