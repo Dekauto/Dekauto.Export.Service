@@ -2,7 +2,7 @@
 {
     public class Student
     {
-        
+
         public string? Name { get; set; } // Имя +
         public string? Surname { get; set; } // Фамилия +
         public string? Patronymic { get; set; } // Отчество +
@@ -21,7 +21,7 @@
         public string? AddressRegistrationIndex { get; set; } // Почтовый индекс регистрации +
         public string? AddressRegistrationOblKrayAvtobl { get; set; } // Область/край/автономный округ регистрации +
         public string? AddressRegistrationDistrict { get; set; } // Район регистрации +
-        public string? AddressRegistrationType {  get; set; }//Тип населенного пункта регистрация +
+        public string? AddressRegistrationType { get; set; }//Тип населенного пункта регистрация +
         public string? AddressRegistrationStreet { get; set; } // Улица регистрации +
         public string? AddressRegistrationCity { get; set; } // Город регистрации +
         public string? AddressRegistrationHouse { get; set; } // Дом регистрации +

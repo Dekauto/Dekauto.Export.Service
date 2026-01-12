@@ -32,5 +32,5 @@ RUN dotnet publish "./Dekauto.Export.Service.csproj" -c $BUILD_CONFIGURATION -o 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-COPY "card_template.xlsx" "."
+COPY "Templates/card/card_template.xlsx" "Templates/"
 ENTRYPOINT ["dotnet", "Dekauto.Export.Service.dll"]

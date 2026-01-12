@@ -1,19 +1,18 @@
 using Dekauto.Export.Service.Domain.Entities;
 using Dekauto.Export.Service.Domain.Interfaces;
-using Microsoft.AspNetCore.Mvc;
 using OfficeOpenXml;
 using System.IO.Compression;
 
 namespace Dekauto.Export.Service.Domain.Services
 {
-    public class StudentsService: IStudentsService
+    public class StudentsCardService : IStudentsCardService
     {
         private IConfiguration _configuration;
         private string exportCardName;
-        public StudentsService (IConfiguration configuration) 
+        public StudentsCardService(IConfiguration configuration)
         {
             _configuration = configuration;
-            exportCardName = _configuration.GetValue<string>("ExportCardName")??throw new ArgumentNullException(nameof(exportCardName));
+            exportCardName = _configuration.GetValue<string>("ExportCardName") ?? throw new ArgumentNullException(nameof(exportCardName));
 
         }
         public async Task<MemoryStream> ConvertStudentsToExcel(List<Student> students)
@@ -66,7 +65,7 @@ namespace Dekauto.Export.Service.Domain.Services
             }
 
             var stream = new MemoryStream(); //Используем временное хранилище
-            
+
             using (var package = new ExcelPackage(new FileInfo(templatePath)))
             {
                 FillExcel(student, package);
@@ -75,7 +74,7 @@ namespace Dekauto.Export.Service.Domain.Services
             stream.Position = 0; //Сбрасываем позицию
             return stream;
         }
-        public void FillExcel(Student student, ExcelPackage package) 
+        public void FillExcel(Student student, ExcelPackage package)
         {
             if (package.Workbook.Worksheets.Count == 0)
             {
@@ -201,38 +200,38 @@ namespace Dekauto.Export.Service.Domain.Services
             for (int courseIndex = 0; courseIndex < courseSheetNames.Length; courseIndex++)
             {
                 var sheetName = courseSheetNames[courseIndex];
-                
+
                 // Сначала пытаемся найти лист по точному имени
                 var worksheet = package.Workbook.Worksheets[sheetName];
-                
+
                 // Если не нашли, пытаемся найти по частичному совпадению
                 if (worksheet == null)
                 {
-                    worksheet = package.Workbook.Worksheets.FirstOrDefault(ws => 
+                    worksheet = package.Workbook.Worksheets.FirstOrDefault(ws =>
                         ws.Name.Contains(sheetName, StringComparison.OrdinalIgnoreCase) ||
                         sheetName.Contains(ws.Name, StringComparison.OrdinalIgnoreCase));
                 }
-                
+
                 if (worksheet == null)
                     continue;
 
                 var courseNumber = courseIndex + 1;
-                
+
                 // Вычисляем номер курса на основе Year дисциплины, Semester и EducationStartYear
                 // Учебный год начинается осенью:
                 // - Нечетный семестр (1, 3, 5...) в году Y → учебный год Y-Y+1
                 // - Четный семестр (2, 4, 6...) в году Y → учебный год Y-1-Y
                 // Курс определяется по году начала учебного года
                 var disciplinesForCourse = student.DisciplineResults
-                    .Where(d => 
+                    .Where(d =>
                     {
                         if (!d.Year.HasValue || !d.Semester.HasValue)
                             return false;
-                        
+
                         short disciplineYear = d.Year.Value;
                         short semester = d.Semester.Value;
                         short startYear = student.EducationStartYear.Value;
-                        
+
                         // Определяем год начала учебного года для этой дисциплины
                         short academicYearStart;
                         if (semester % 2 == 1) // Нечетный семестр (осень)
@@ -245,7 +244,7 @@ namespace Dekauto.Export.Service.Domain.Services
                             // Учебный год начался в предыдущем году
                             academicYearStart = (short)(disciplineYear - 1);
                         }
-                        
+
                         // Вычисляем курс для дисциплины
                         short disciplineCourse;
                         if (academicYearStart < startYear)
@@ -258,7 +257,7 @@ namespace Dekauto.Export.Service.Domain.Services
                             // Курс = разница в годах начала учебного года + 1
                             disciplineCourse = (short)(academicYearStart - startYear + 1);
                         }
-                        
+
                         return disciplineCourse == courseNumber;
                     })
                     .ToList();
@@ -313,8 +312,8 @@ namespace Dekauto.Export.Service.Domain.Services
                     worksheet.Cells[currentRow, 5].Value = discipline.AudHours.Value;
 
                 // Столбец 7: форма аттестации (практика заменяется на "зачёт с оценкой")
-                var controlTypeForDisplay = discipline.ControlType?.ToLower().Trim() == "практика" 
-                    ? "зачёт с оценкой" 
+                var controlTypeForDisplay = discipline.ControlType?.ToLower().Trim() == "практика"
+                    ? "зачёт с оценкой"
                     : discipline.ControlType;
                 worksheet.Cells[currentRow, 7].Value = controlTypeForDisplay;
 
@@ -343,7 +342,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
             // Формы зачета/с оценкой (учитываем варианты написания: зачет, зачёт, зачет с оценкой, зачёт с оценкой)
             // Практика обрабатывается как зачет с оценкой
-            if (controlTypeLower == "зачет" || controlTypeLower == "зачёт" || 
+            if (controlTypeLower == "зачет" || controlTypeLower == "зачёт" ||
                 controlTypeLower == "зачет с оценкой" || controlTypeLower == "зачёт с оценкой" ||
                 controlTypeLower == "практика")
             {
@@ -435,7 +434,7 @@ namespace Dekauto.Export.Service.Domain.Services
             // Формат даты: "YYYY-YYYY" где первая часть - год начала учебного года (осень), вторая - конец (весна)
             short? oddYearStart = null;
             short? evenYearStart = null;
-            
+
             // Определяем год начала учебного года для нечетного семестра
             var oddDiscipline = oddSemesterDisciplines.FirstOrDefault();
             if (oddDiscipline != null && oddDiscipline.Year.HasValue && oddDiscipline.Semester.HasValue)
@@ -443,7 +442,7 @@ namespace Dekauto.Export.Service.Domain.Services
                 // Нечетный семестр (осень) - учебный год начинается в этом же году
                 oddYearStart = oddDiscipline.Year.Value;
             }
-            
+
             // Определяем год начала учебного года для четного семестра
             var evenDiscipline = evenSemesterDisciplines.FirstOrDefault();
             if (evenDiscipline != null && evenDiscipline.Year.HasValue && evenDiscipline.Semester.HasValue)
@@ -451,7 +450,7 @@ namespace Dekauto.Export.Service.Domain.Services
                 // Четный семестр (весна) - учебный год начался в предыдущем году
                 evenYearStart = (short)(evenDiscipline.Year.Value - 1);
             }
-            
+
             // Формируем дату для нечетного семестра (строка 3)
             if (oddYearStart.HasValue)
             {
@@ -463,7 +462,7 @@ namespace Dekauto.Export.Service.Domain.Services
                 }
                 worksheet.Cells[3, 8].Value = oddDateFormat;
             }
-            
+
             // Формируем дату для четного семестра (строка 33)
             if (evenYearStart.HasValue)
             {

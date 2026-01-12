@@ -1,6 +1,7 @@
 ﻿using Dekauto.Export.Service.Domain.Interfaces;
 using Dekauto.Export.Service.Domain.Services;
-using Dekauto.Export.Service.Domain.Services.Metric;
+using Dekauto.Export.Service.Domain.Services.Metrics;
+using Dekauto.Export.Service.Domain.Utils;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi.Models;
@@ -8,7 +9,6 @@ using Prometheus;
 using Serilog;
 using Serilog.Events;
 using Serilog.Sinks.Loki;
-using System.Text;
 
 var tempOutputTemplate = "[EXPORT STARTUP LOGGER] {Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}";
 // Временные логгер Serilog для этапа до создания билдера
@@ -30,6 +30,14 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     var builder = WebApplication.CreateBuilder(args);
+    // Применение конфигов.
+    builder.Configuration
+        .SetBasePath(Directory.GetCurrentDirectory())
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+        .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true)
+        .AddJsonFile($"appsettings.{Environment.UserName.ToLowerInvariant()}.json", optional: true, reloadOnChange: true)
+        .AddEnvironmentVariables()
+        .AddCommandLine(args);
 
     // Add services to the container.
 
@@ -84,8 +92,11 @@ try
         }
         });
     });
-    builder.Services.AddTransient<IStudentsService, StudentsService>();
+    builder.Services.AddTransient<IStudentsCardService, StudentsCardService>();
     builder.Services.AddSingleton<IRequestMetricsService, RequestMetricsService>();
+    builder.Services.AddSingleton<IExportHelper, ExportHelper>();
+    builder.Services.AddSingleton<IExportApiHelper, ExportApiHelper>();
+    builder.Services.AddSingleton<IDiplomaSupplementExportService, DiplomaSupplementExportService>();
 
     if (Boolean.Parse(builder.Configuration["UseEndpointAuth"] ?? "true"))
     {

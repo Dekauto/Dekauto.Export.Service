@@ -2,8 +2,6 @@
 using Dekauto.Export.Service.Domain.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Net.Http.Headers;
-using Serilog;
 
 namespace Dekauto.Export.Service.API.Controllers
 {
@@ -12,32 +10,20 @@ namespace Dekauto.Export.Service.API.Controllers
     [Authorize]
     public class StudentCardsController : ControllerBase
     {
-        private readonly IStudentsService studentsService;
+        private readonly IStudentsCardService studentsService;
+        private readonly IExportApiHelper apiHelper;
         private string defaultLatFileName = "exported_student_card";
         private readonly ILogger<StudentCardsController> logger;
-        public StudentCardsController(IStudentsService studentsService, ILogger<StudentCardsController> logger) 
+        public StudentCardsController(IStudentsCardService studentsService, ILogger<StudentCardsController> logger,
+            IExportApiHelper apiHelper)
         {
-            this.studentsService = studentsService??throw new ArgumentNullException();
+            this.studentsService = studentsService ?? throw new ArgumentNullException(nameof(studentsService));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
-        private void SetHeaderFileNames(string fileName, string fileNameStar)
-        {
-            // Проблема: передается только сам файл, а его название автомат. вписывается в заголовки, но без поддержки кириллицы.
-            // Формируем http-заголовок с поддержкой UTF-8 (для поддержки кириллицы в http-заголовках)
-            if (Response == null)
-            {
-                throw new InvalidOperationException("Response не инициализирован.");
-            }
-            var encodedFileName = Uri.EscapeDataString(fileNameStar);
-            Response.Headers.Append(
-                "Content-Disposition",
-                $"attachment; filename=\"{fileName}.xlsx\"; filename*=UTF-8''{encodedFileName}"
-            );
+            this.apiHelper = apiHelper ?? throw new ArgumentNullException(nameof(apiHelper));
         }
 
         [HttpPost("student")]
-        public async Task<IActionResult> ExportStudentAsync([FromBody] Student student) 
+        public async Task<IActionResult> ExportStudentAsync([FromBody] Student student)
         {
             try
             {
@@ -45,12 +31,12 @@ namespace Dekauto.Export.Service.API.Controllers
                 var stream = await studentsService.ConvertStudentToExcel(student);
                 // INFO: данные в имени файла не должны содержать спецсимволы!
                 string fileName = $"{student.Surname} {student.Name} {student.Patronymic}";
-                SetHeaderFileNames(defaultLatFileName, fileName);
+                apiHelper.SetHeaderFileNames(Response, defaultLatFileName, fileName);
 
                 // Возвращаем файл БЕЗ указания имени в третьем параметре
                 return File(stream, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
                 logger.LogError(ex, $"Ошибка при экспорте студента {student.Surname} {student.Name}: {ex.Message}");
                 return HandleException(ex);
@@ -66,18 +52,18 @@ namespace Dekauto.Export.Service.API.Controllers
 
                 // INFO: данные в имени файла не должны содержать спецсимволы
                 string fileName = students.First().GroupName ?? throw new ArgumentNullException(nameof(fileName));
-                SetHeaderFileNames(defaultLatFileName, fileName);
+                apiHelper.SetHeaderFileNames(Response, defaultLatFileName, fileName);
                 return File(stream, "application/zip");
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
                 logger.LogError(ex, $"Ошибка при групповом экспорте: {ex.Message}");
                 return HandleException(ex);
             }
         }
-        private IActionResult HandleException(Exception ex) 
+        private IActionResult HandleException(Exception ex)
         {
-            switch (ex) 
+            switch (ex)
             {
                 case ArgumentNullException argumentNullException:
                     return BadRequest(argumentNullException.Message);
