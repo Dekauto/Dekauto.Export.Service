@@ -388,11 +388,14 @@ namespace Dekauto.Export.Service.Domain.Services
                         Score = lastEntry.Score,
                         ControlType = lastEntry.ControlType,
                         Semester = lastEntry.Semester,
-                        Year = lastEntry.Year
+                        Year = lastEntry.Year,
+                        PlanOrder = g.Min(x => x.PlanOrder),
+                        RequiresManualValidation = g.Any(x => x.RequiresManualValidation)
                     };
                 })
-                .OrderBy(x => x.Semester ?? 0)
-                .ThenBy(x => x.DisciplineName)
+                .OrderBy(x => x.PlanOrder ?? int.MaxValue)
+                .ThenBy(x => x.Semester ?? 0)
+                .ThenBy(x => x.DisciplineName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
@@ -473,6 +476,9 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private string? GetGradeText(StudentDisciplineResult result)
         {
+            if (result.RequiresManualValidation)
+                return "ТРЕБУЕТ ПРОВЕРКИ";
+
             string scoreStr = result.Score?.ToString()?.Trim() ?? "";
             string controlType = result.ControlType?.ToLower()?.Trim() ?? "";
 
