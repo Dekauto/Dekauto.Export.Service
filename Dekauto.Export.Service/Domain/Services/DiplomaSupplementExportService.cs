@@ -15,6 +15,20 @@ namespace Dekauto.Export.Service.Domain.Services
         private readonly string commentAuthor = "Dekauto";
         private ExcelWorksheet? activeWorksheet;
 
+        private const string Xmark = "x";
+
+        private static readonly Dictionary<string, string> KnownTextGradeMap = new(StringComparer.OrdinalIgnoreCase)
+        {
+            { "отлично", "отлично" },
+            { "хорошо", "хорошо" },
+            { "удовлетворительно", "удовлетворительно" },
+            { "неудовлетворительно", "неудовлетворительно" },
+            { "зачтено", "зачтено" },
+            { "не зачтено", "не зачтено" },
+            { "х", "x" }, // рус
+            { "x", "x" }, // лат
+        };
+
         // Поля для отслеживания текущего состояния записи
         private int _currentRow;
         private int _itemIndex;
@@ -312,7 +326,7 @@ namespace Dekauto.Export.Service.Domain.Services
             {
                 double practiceCredits = practices.Sum(p => ConvertToDouble(p.CreditUnits));
 
-                WriteDisciplineRow("Практики", $"{practiceCredits} з.е.", null);
+                WriteDisciplineRow("Практики", FormatCredits(practiceCredits), Xmark);
                 WriteDisciplineRow("в том числе:", null, null);
 
                 foreach (var item in practices)
@@ -326,26 +340,26 @@ namespace Dekauto.Export.Service.Domain.Services
             {
                 double giaCredits = giaResults.Sum(g => ConvertToDouble(g.CreditUnits));
 
-                WriteDisciplineRow("Государственная итоговая аттестация", $"{giaCredits} з.е.", null);
+                WriteDisciplineRow("Государственная итоговая аттестация", FormatCredits(giaCredits), Xmark);
                 WriteDisciplineRow("в том числе:", null, null);
 
                 foreach (var item in giaResults)
                 {
                     // Для элементов ГИА пишем название (там уже тема ВКР, если есть) и оценку
                     // Кредиты для подпунктов ГИА обычно не ставятся
-                    WriteDisciplineRow(item.DisciplineName, null, GetGradeText(item));
+                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
                 }
             }
 
             // Блок 4: Объем образовательной программы (Итого)
-            WriteDisciplineRow("Объем образовательной программы", $"{totalCredits} з.е.", null);
+            WriteDisciplineRow("Объем образовательной программы", FormatCredits(totalCredits), Xmark);
             WriteDisciplineRow("в том числе объем контактной работы обучающихся", null, null);
-            WriteDisciplineRow("во взаимодействии с преподавателем в академических часах:", $"{totalAudHours} ак. час.", null);
+            WriteDisciplineRow("во взаимодействии с преподавателем в академических часах:", FormatAudHours(totalAudHours), Xmark);
 
             // Блок 5: Курсовые работы
             foreach (var item in courseWorks)
             {
-                WriteDisciplineRow(item.DisciplineName, null, GetGradeText(item));
+                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
             }
 
             // Блок 6: Факультативы
@@ -482,39 +496,66 @@ namespace Dekauto.Export.Service.Domain.Services
             string scoreStr = result.Score?.ToString()?.Trim() ?? "";
             string controlType = result.ControlType?.ToLower()?.Trim() ?? "";
 
-            // 1. Зачет
+            // 1. Зачет: только 15 / 0 и каноничные подписи, иначе проверка (без тихого "зачтено")
             if (controlType == "зачёт" || controlType == "зачет")
             {
-                if (scoreStr == "15" || scoreStr.Equals("зачтено", StringComparison.OrdinalIgnoreCase))
+                if (scoreStr.Equals("зачтено", StringComparison.OrdinalIgnoreCase))
                     return "зачтено";
-                if (scoreStr == "0" || scoreStr.Equals("не зачтено", StringComparison.OrdinalIgnoreCase))
+                if (scoreStr.Equals("не зачтено", StringComparison.OrdinalIgnoreCase))
                     return "не зачтено";
-
-                // Для всех прочих случаев зачета (пусто или странные цифры) по ТЗ "зачтено" 
-                // если это успешно пройденная дисциплина, но тут безопаснее вернуть null или что есть
-                return string.IsNullOrEmpty(scoreStr) ? null : "зачтено";
+                if (double.TryParse(scoreStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double zachScore))
+                {
+                    if (Math.Abs(zachScore - 15d) < 0.0001d) return "зачтено";
+                    if (Math.Abs(zachScore) < 0.0001d) return "не зачтено";
+                }
+                if (string.IsNullOrEmpty(scoreStr))
+                    return Xmark;
+                _logger.LogWarning($"Нераспознанное значение оценки (зачёт): \"{scoreStr}\". Требуется проверка оператора.");
+                return "ТРЕБУЕТ ПРОВЕРКИ";
             }
 
-            // 2. Оценка (Экзамен, Диф.зачет, Курсовая)
+            // 2. Оценка (Экзамен, Диф.зачет, Курсовая) — числа 1..15 и т.д.
             if (double.TryParse(scoreStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double scoreNum))
             {
-                if (scoreNum < 7) return "неудовлетворительно";
-                if (scoreNum >= 7 && scoreNum <= 9) return "удовлетворительно";
-                if (scoreNum >= 10 && scoreNum <= 12) return "хорошо";
-                if (scoreNum >= 13) return "отлично";
+                if (scoreNum < 0d || scoreNum > 15d)
+                {
+                    _logger.LogWarning($"Нераспознанное значение оценки (вне шкалы 0..15): \"{scoreStr}\". Требуется проверка оператора.");
+                    return "ТРЕБУЕТ ПРОВЕРКИ";
+                }
+                return MapNumericScore(scoreNum);
             }
 
-            // Если уже текст
-            if (!string.IsNullOrEmpty(scoreStr)) return scoreStr;
+            // 3. Уже текст — только каноничные подписи, остальное на ручную проверку
+            if (!string.IsNullOrEmpty(scoreStr))
+            {
+                if (KnownTextGradeMap.TryGetValue(scoreStr, out var mapped)) return mapped;
+                _logger.LogWarning($"Нераспознанное значение оценки: \"{scoreStr}\". Требуется проверка оператора.");
+                return "ТРЕБУЕТ ПРОВЕРКИ";
+            }
 
-            return null; // Пусто, никаких "х"
+            return Xmark;
         }
+
+        /// <summary>Шкала 0..15 для экзамена/диф.зачёта: &lt;7 … 13–15 отл</summary>
+        private static string MapNumericScore(double score) => score switch
+        {
+            < 7d => "неудовлетворительно",
+            < 10d => "удовлетворительно",
+            < 13d => "хорошо",
+            _ => "отлично",
+        };
 
         private string? FormatCredits(object? credits)
         {
             double d = ConvertToDouble(credits);
-            if (d == 0) return null; // 0 не отображаем
+            if (d == 0) return Xmark;
             return $"{d} з.е.";
+        }
+
+        private string? FormatAudHours(double audHours)
+        {
+            if (audHours == 0) return Xmark;
+            return $"{audHours} ак. час.";
         }
 
         private double ConvertToDouble(object? val)
