@@ -2,7 +2,9 @@
 using Dekauto.Export.Service.Domain.Entities.DTO;
 using Dekauto.Export.Service.Domain.Interfaces;
 using OfficeOpenXml;
+using OfficeOpenXml.Style;
 using System.Data.Entity.Core.Common.CommandTrees.ExpressionBuilder;
+using System.Drawing;
 using System.Globalization;
 
 namespace Dekauto.Export.Service.Domain.Services
@@ -302,6 +304,13 @@ namespace Dekauto.Export.Service.Domain.Services
             var giaResults = ProcessDisciplines(rawGia);
             var courseWorks = ProcessDisciplines(rawCourseWorks); // Курсовые сортируем по семестру
 
+            int attentionRowCount =
+                disciplines.Count(x => x.RequiresManualValidation)
+                + practices.Count(x => x.RequiresManualValidation)
+                + giaResults.Count(x => x.RequiresManualValidation)
+                + courseWorks.Count(x => x.RequiresManualValidation)
+                + electives.Count(x => x.RequiresManualValidation);
+
             // 5. Подсчет итогов
             double totalCredits = disciplines.Sum(x => ConvertToDouble(x.CreditUnits))
                                 + practices.Sum(x => ConvertToDouble(x.CreditUnits))
@@ -318,7 +327,7 @@ namespace Dekauto.Export.Service.Domain.Services
             // Блок 1: Дисциплины
             foreach (var item in disciplines)
             {
-                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
+                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
             }
 
             // Блок 2: Практики
@@ -331,7 +340,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
                 foreach (var item in practices)
                 {
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
+                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
                 }
             }
 
@@ -347,7 +356,7 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     // Для элементов ГИА пишем название (там уже тема ВКР, если есть) и оценку
                     // Кредиты для подпунктов ГИА обычно не ставятся
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
+                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
                 }
             }
 
@@ -359,7 +368,7 @@ namespace Dekauto.Export.Service.Domain.Services
             // Блок 5: Курсовые работы
             foreach (var item in courseWorks)
             {
-                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
+                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
             }
 
             // Блок 6: Факультативы
@@ -370,9 +379,11 @@ namespace Dekauto.Export.Service.Domain.Services
 
                 foreach (var item in electives)
                 {
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item));
+                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
                 }
             }
+
+            _logger.LogInformation("Лист освоения программы: строк дисциплин с пометкой для проверки оператора: {Count}", attentionRowCount);
 
             activeWorksheet = null;
         }
@@ -416,7 +427,7 @@ namespace Dekauto.Export.Service.Domain.Services
         /// <summary>
         /// Запись строки данных (или заголовка) в таблицу
         /// </summary>
-        private void WriteDisciplineRow(string? name, string? creditsValue, string? gradeValue)
+        private void WriteDisciplineRow(string? name, string? creditsValue, string? gradeValue, bool highlightAttention = false)
         {
             if (string.IsNullOrWhiteSpace(name)) return;
 
@@ -438,6 +449,8 @@ namespace Dekauto.Export.Service.Domain.Services
                 _currentRow = 135;
             }
 
+            int rowStart = _currentRow;
+
             // 3. Запись данных
             for (int i = 0; i < rowsNeeded; i++)
             {
@@ -456,10 +469,31 @@ namespace Dekauto.Export.Service.Domain.Services
                 }
             }
 
+            if (highlightAttention && activeWorksheet != null)
+            {
+                int rowEnd = rowStart + rowsNeeded - 1;
+                ApplyAttentionRowFill(rowStart, rowEnd);
+            }
+
             _currentRow += rowsNeeded;
         }
 
-        // --- ОБНОВЛЕННЫЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ---
+        private void ApplyAttentionRowFill(int rowFrom, int rowTo)
+        {
+            if (activeWorksheet == null) return;
+            var fillColor = Color.FromArgb(255, 248, 210);
+            for (int r = rowFrom; r <= rowTo; r++)
+            {
+                for (int col = 2; col <= 4; col++)
+                {
+                    var cell = activeWorksheet.Cells[r, col];
+                    cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
+                    cell.Style.Fill.BackgroundColor.SetColor(fillColor);
+                }
+            }
+        }
+
+        
 
         private List<string> SplitText(string text, int limit)
         {
