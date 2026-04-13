@@ -227,7 +227,7 @@ namespace Dekauto.Export.Service.Domain.Services
             SetCellValue("B6", data.BirthdayDate);
             SetCellValue("B8", data.EducationReceived);
             SetCellValue("B9", data.EducationReceivedDate is not null ? data.EducationReceivedDate.Value.Year : null);
-            SetCellValue("B12", data.DiplomaWithHonors.Value ? "с отличием" : null);
+            SetCellValue("B12", data.DiplomaWithHonors == true ? "с отличием" : null);
 
             activeWorksheet = null;
         }

@@ -1,6 +1,7 @@
 using Dekauto.Export.Service.Domain.Entities;
 using Dekauto.Export.Service.Domain.Interfaces;
 using OfficeOpenXml;
+using System.Globalization;
 using System.IO.Compression;
 
 namespace Dekauto.Export.Service.Domain.Services
@@ -318,8 +319,11 @@ namespace Dekauto.Export.Service.Domain.Services
                 worksheet.Cells[currentRow, 7].Value = controlTypeForDisplay;
 
                 // Столбец 8: оценка
-                if (discipline.Score.HasValue)
-                    worksheet.Cells[currentRow, 8].Value = discipline.Score.Value;
+                var scoreNumRow = ParseScoreNumeric(discipline.Score);
+                if (scoreNumRow.HasValue)
+                    worksheet.Cells[currentRow, 8].Value = scoreNumRow.Value;
+                else if (!string.IsNullOrEmpty(discipline.Score))
+                    worksheet.Cells[currentRow, 8].Value = discipline.Score;
 
                 // Столбец 9: интерпретация
                 worksheet.Cells[currentRow, 9].Value = GetInterpretation(discipline.Score, discipline.ControlType);
@@ -332,7 +336,10 @@ namespace Dekauto.Export.Service.Domain.Services
             }
         }
 
-        private string GetInterpretation(double? score, string? controlType)
+        private string GetInterpretation(string? scoreStr, string? controlType)
+            => ScoreInterpretation(ParseScoreNumeric(scoreStr), controlType);
+
+        private string ScoreInterpretation(double? score, string? controlType)
         {
             if (!score.HasValue || string.IsNullOrEmpty(controlType))
                 return string.Empty;
@@ -374,7 +381,7 @@ namespace Dekauto.Export.Service.Domain.Services
         private bool HasDisciplineData(StudentDisciplineResult discipline)
         {
             return !string.IsNullOrEmpty(discipline.DisciplineName) ||
-                   discipline.Score.HasValue ||
+                   !string.IsNullOrEmpty(discipline.Score) ||
                    discipline.CreditUnits.HasValue ||
                    !string.IsNullOrEmpty(discipline.ControlType);
         }
@@ -395,9 +402,13 @@ namespace Dekauto.Export.Service.Domain.Services
                 worksheet.Cells[nameRow, 3].Value = courseWork.DisciplineName;
 
                 // Оценка в строке scoreRow на столбце 8
-                if (courseWork.Score.HasValue)
+                if (!string.IsNullOrEmpty(courseWork.Score))
                 {
-                    worksheet.Cells[scoreRow, 8].Value = courseWork.Score.Value;
+                    var courseScoreNum = ParseScoreNumeric(courseWork.Score);
+                    if (courseScoreNum.HasValue)
+                        worksheet.Cells[scoreRow, 8].Value = courseScoreNum.Value;
+                    else
+                        worksheet.Cells[scoreRow, 8].Value = courseWork.Score;
                 }
 
                 // Интерпретация в строке scoreRow на столбце 9 (как для не-зачета: экзамен, контрольная)
@@ -409,7 +420,10 @@ namespace Dekauto.Export.Service.Domain.Services
             }
         }
 
-        private string GetInterpretationForNonCredit(double? score)
+        private string GetInterpretationForNonCredit(string? scoreStr)
+            => NonCreditInterpretation(ParseScoreNumeric(scoreStr));
+
+        private string NonCreditInterpretation(double? score)
         {
             if (!score.HasValue)
                 return string.Empty;
@@ -474,6 +488,14 @@ namespace Dekauto.Export.Service.Domain.Services
                 }
                 worksheet.Cells[33, 8].Value = evenDateFormat;
             }
+        }
+
+        private static double? ParseScoreNumeric(string? score)
+        {
+            if (string.IsNullOrWhiteSpace(score)) return null;
+            if (double.TryParse(score.Replace(",", "."), NumberStyles.Any, CultureInfo.InvariantCulture, out var d))
+                return d;
+            return null;
         }
     }
 }

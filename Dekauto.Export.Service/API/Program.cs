@@ -4,6 +4,7 @@ using Dekauto.Export.Service.Domain.Services.Metrics;
 using Dekauto.Export.Service.Domain.Utils;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi.Models;
 using Prometheus;
 using Serilog;
@@ -41,7 +42,29 @@ try
 
     // Add services to the container.
 
-    builder.Services.AddControllers();
+    builder.Services.AddControllers()
+        .ConfigureApiBehaviorOptions(options =>
+        {
+            // Иначе при 400 до входа в экшен контроллер молчит — в логах пусто.
+            options.InvalidModelStateResponseFactory = context =>
+            {
+                var log = context.HttpContext.RequestServices
+                    .GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("Dekauto.Export.ModelBinding");
+                var errors = context.ModelState
+                    .Where(kv => kv.Value != null && kv.Value.Errors.Count > 0)
+                    .Select(kv => $"{kv.Key}: {string.Join(" | ", kv.Value!.Errors.Select(e =>
+                        string.IsNullOrEmpty(e.ErrorMessage) ? e.Exception?.Message : e.ErrorMessage))}");
+                log.LogWarning("Отклонён запрос: невалидная модель. {Method} {Path}. {Errors}",
+                    context.HttpContext.Request.Method,
+                    context.HttpContext.Request.Path,
+                    string.Join("; ", errors));
+                return new BadRequestObjectResult(new ValidationProblemDetails(context.ModelState)
+                {
+                    Status = StatusCodes.Status400BadRequest
+                });
+            };
+        });
     // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
     builder.Services.AddEndpointsApiExplorer();
 
@@ -127,6 +150,7 @@ try
     var app = builder.Build();
 
     // Configure the HTTP request pipeline.
+    app.UseSerilogRequestLogging();
 
     // Явно указываем порты (для Docker)
     app.Urls.Add("http://*:5505");
