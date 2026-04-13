@@ -228,6 +228,7 @@ namespace Dekauto.Export.Service.Domain.Services
             SetCellValue("B8", data.EducationReceived);
             SetCellValue("B9", data.EducationReceivedDate is not null ? data.EducationReceivedDate.Value.Year : null);
             SetCellValue("B12", data.DiplomaWithHonors == true ? "с отличием" : null);
+            SetCellValue("B14", data.CourseOfTraining);
 
             activeWorksheet = null;
         }
@@ -312,9 +313,10 @@ namespace Dekauto.Export.Service.Domain.Services
                 + electives.Count(x => x.RequiresManualValidation);
 
             // 5. Подсчет итогов
-            double totalCredits = disciplines.Sum(x => ConvertToDouble(x.CreditUnits))
+            double summedCredits = disciplines.Sum(x => ConvertToDouble(x.CreditUnits))
                                 + practices.Sum(x => ConvertToDouble(x.CreditUnits))
                                 + giaResults.Sum(x => ConvertToDouble(x.CreditUnits));
+            double totalCredits = data.TargetProgramCredits ?? summedCredits;
 
             double totalAudHours = disciplines.Sum(x => ConvertToDouble(x.AudHours))
                                  + practices.Sum(x => ConvertToDouble(x.AudHours))
