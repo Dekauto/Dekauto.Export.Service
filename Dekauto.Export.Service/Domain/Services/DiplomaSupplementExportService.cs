@@ -6,6 +6,7 @@ using OfficeOpenXml.Style;
 using System.Data.Entity.Core.Common.CommandTrees.ExpressionBuilder;
 using System.Drawing;
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace Dekauto.Export.Service.Domain.Services
 {
@@ -17,7 +18,8 @@ namespace Dekauto.Export.Service.Domain.Services
         private readonly string commentAuthor = "Dekauto";
         private ExcelWorksheet? activeWorksheet;
 
-        private const string Xmark = "x";
+        /// <summary>Плейсхолдер в столбце C/D как в образце РИД (кириллическое «х»).</summary>
+        private const string Xmark = "\u0445"; // кирилл. х
 
         private static readonly Dictionary<string, string> KnownTextGradeMap = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -27,8 +29,8 @@ namespace Dekauto.Export.Service.Domain.Services
             { "неудовлетворительно", "неудовлетворительно" },
             { "зачтено", "зачтено" },
             { "не зачтено", "не зачтено" },
-            { "х", "x" }, // рус
-            { "x", "x" }, // лат
+            { "х", "\u0445" },
+            { "x", "\u0445" },
         };
 
         // Поля для отслеживания текущего состояния записи
@@ -48,7 +50,15 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private void AddComment(string cell)
         {
-            activeWorksheet.Cells[cell].AddComment(cellComment, commentAuthor);
+            if (activeWorksheet == null) return;
+            var r = activeWorksheet.Cells[cell];
+            if (r.Comment != null)
+            {
+                r.Comment.Text = cellComment;
+                r.Comment.Author = commentAuthor;
+            }
+            else
+                r.AddComment(cellComment, commentAuthor);
         }
 
         private void SetCellValue(int row, int col, object? value, bool addComment = true)
@@ -65,9 +75,86 @@ namespace Dekauto.Export.Service.Domain.Services
                 cell.Value = value;
                 if (addComment)
                 {
-                    cell.AddComment(cellComment, commentAuthor);
+                    if (cell.Comment != null)
+                    {
+                        cell.Comment.Text = cellComment;
+                        cell.Comment.Author = commentAuthor;
+                    }
+                    else
+                    {
+                        cell.AddComment(cellComment, commentAuthor);
+                    }
                 }
             }
+        }
+
+        private static bool IsProgramMasteringNoiseName(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return true;
+            var lower = raw.Trim().ToLowerInvariant();
+            if (lower.Contains("итого") && lower.Contains("семестр"))
+                return true;
+            if (lower.StartsWith("итого", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (string.Equals(lower, "в том числе:", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (string.Equals(lower, "в том числе", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
+        }
+
+        private static bool IsProbableGiaDisciplineName(string nameLower)
+        {
+            return nameLower.Contains("государственн") ||
+                   nameLower.Contains("выпускная") ||
+                   nameLower.Contains("квалификационн") ||
+                   nameLower.Contains("защита вкр") ||
+                   nameLower.Contains("итоговый") ||
+                   (nameLower.Contains("защит") && nameLower.Contains("выпускн"));
+        }
+
+        /// <summary>Совпадение с блоком практик плана после разбиения длинных имён или без якоря «Блок 2» на листе.</summary>
+        private static bool IsLikelyPracticeBlockDisciplineName(string? disciplineName)
+        {
+            if (string.IsNullOrWhiteSpace(disciplineName))
+                return false;
+            var n = disciplineName.Trim();
+            var nl = n.ToLowerInvariant();
+            if (nl.Contains("проектный практикум"))
+                return false;
+            if (n.StartsWith("Учебная практика", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (n.StartsWith("Производственная практика", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (nl.Contains("научно-исследовательская работа") ||
+                nl.Contains("научно-исследовательской работы"))
+                return true;
+            if (nl.Contains("практика по получению профессиональных"))
+                return true;
+            if (nl.StartsWith("навыков ", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (nl.Contains("научно-исследовательской работы)"))
+                return true;
+            if (nl.StartsWith("умений ", StringComparison.OrdinalIgnoreCase) && nl.Contains("опыта"))
+                return true;
+            if (nl.Contains("преддипломная") && nl.Contains("практик"))
+                return true;
+            if (nl.StartsWith("выпускной квалификационной работы", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
+        }
+
+        private static bool IsCardOnlyGarbageExportPlaceholder(string? disciplineName)
+        {
+            if (string.IsNullOrWhiteSpace(disciplineName))
+                return true;
+            var t = disciplineName.Trim();
+            if (t.StartsWith("НАЗВАНИЕ ДИСЦИПЛИНЫ", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (t.Contains("Тема курсовой работы", StringComparison.OrdinalIgnoreCase))
+                return true;
+            return false;
         }
 
         private void SetCellValue(string cellAddr, object value)
@@ -176,8 +263,12 @@ namespace Dekauto.Export.Service.Domain.Services
                 .First(); // ищем "1 Обладатель диплома"
             var programMasteringSheet = ws.Where(w => w.Name.Trim().Contains("програм", StringComparison.OrdinalIgnoreCase))
                 .First(); // ищем "3 Освоение программы"
-            //var otherDataSheet = ws.Where(w => w.Name.Trim().Contains("сведен", StringComparison.OrdinalIgnoreCase))
-            //  .First(); // ищем "4 доп.сведения"
+            var otherDataSheet = ws.FirstOrDefault(w =>
+            {
+                var n = w.Name.Trim();
+                return n.Contains("доп", StringComparison.OrdinalIgnoreCase)
+                    && n.Contains("свед", StringComparison.OrdinalIgnoreCase);
+            });
 
             _logger.LogInformation($"Начинаем заполнение страницы диплома (лист \"{diplomaSheet.Name}\")...");
             FillDiplomaSheet(diplomaSheet, data);
@@ -191,9 +282,14 @@ namespace Dekauto.Export.Service.Domain.Services
             FillProgramMasteringSheet(programMasteringSheet, data);
             _logger.LogInformation("Заполнение страницы освоения программы завершено.");
 
-            //logger.LogInformation($"Начинаем заполнение страницы доп. сведений (лист \"{otherDataSheet.Name}\")...");
-            //FillOtherDataSheet(otherDataSheet, data);
-            //logger.LogInformation("Заполнение страницы доп. сведений завершено.");
+            if (otherDataSheet != null)
+            {
+                _logger.LogInformation($"Начинаем заполнение страницы доп. сведений (лист \"{otherDataSheet.Name}\")...");
+                FillOtherDataSheet(otherDataSheet, data);
+                _logger.LogInformation("Заполнение страницы доп. сведений завершено.");
+            }
+            else
+                _logger.LogWarning("Лист «4 доп.сведения» не найден по имени, пропуск.");
         }
 
         private void FillDiplomaSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
@@ -210,6 +306,7 @@ namespace Dekauto.Export.Service.Domain.Services
             }
 
             SetCellValue("B6", data.DiplomaWithHonors.Value ? "с отличием" : null);
+            ApplyAttentionFillToHonorStatusRow("B6");
 
             activeWorksheet = null;
         }
@@ -225,12 +322,54 @@ namespace Dekauto.Export.Service.Domain.Services
             SetCellValue("B4", data.Name);
             SetCellValue("B5", data.Patronymic);
             SetCellValue("B6", data.BirthdayDate);
-            SetCellValue("B8", data.EducationReceived);
-            SetCellValue("B9", data.EducationReceivedDate is not null ? data.EducationReceivedDate.Value.Year : null);
+            SetCellValue("B8", MapEducationDocumentForSupplementOwnerB8(data.EducationReceived));
+            SetCellValue("B9", data.EducationReceivedDate is not null
+                ? $"{data.EducationReceivedDate.Value.Year} год"
+                : null);
             SetCellValue("B12", data.DiplomaWithHonors == true ? "с отличием" : null);
+            ApplyAttentionFillToHonorStatusRow("B12");
             SetCellValue("B14", data.CourseOfTraining);
 
             activeWorksheet = null;
+        }
+
+        private void FillOtherDataSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
+        {
+            activeWorksheet = sheet;
+            sheet.Protection.IsProtected = false;
+            if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetOpopName))
+                SetCellValue("B6", data.SupplementAdditionalSheetOpopName);
+            if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetStudyFormLine))
+                SetCellValue("B7", data.SupplementAdditionalSheetStudyFormLine);
+            activeWorksheet = null;
+        }
+
+        private static string? MapEducationDocumentForSupplementOwnerB8(string? educationReceivedRaw)
+        {
+            var s = NormalizeOwnerEducationField(educationReceivedRaw);
+            if (string.IsNullOrWhiteSpace(s))
+                return null;
+            var low = s.ToLowerInvariant();
+            if ((low.Contains("среднем") && low.Contains("профессиональн")) ||
+                (low.Contains("среднее") && low.Contains("профессиональн")))
+                return "Диплом о среднем профессиональном образовании";
+            if ((low.Contains("среднем") && low.Contains("общем")) ||
+                (low.Contains("среднее") && low.Contains("общее")))
+                return "Аттестат о среднем общем образовании";
+            if (low.Contains("высшем") && (low.Contains("квалификац") || low.Contains("образовани")))
+                return "Документ о высшем образовании";
+            return s;
+        }
+
+        private static string NormalizeOwnerEducationField(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return "";
+            var s = raw.Replace('\u00A0', ' ').Trim();
+            s = Regex.Replace(s, @"\s+", " ");
+            if (s.Length >= 2 && s.StartsWith('"') && s.EndsWith('"'))
+                s = s.Substring(1, s.Length - 2).Trim();
+            return s;
         }
 
         private void FillProgramMasteringSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
@@ -241,10 +380,8 @@ namespace Dekauto.Export.Service.Domain.Services
             // 1. Снимаем защиту с листа, чтобы можно было редактировать/удалять комментарии
             sheet.Protection.IsProtected = false;
 
-            // 2. Очистка диапазона данных (B2:D140)
-            sheet.Cells["B2:D140"].Value = null;
-            // Опционально: очистить старые комментарии, чтобы они не накапливались
-            // sheet.Cells["B2:D140"].ClearComments(); 
+            // 2. Очистка данных; E — как в шаблоне РИД, формула LEN(B), F — служебные надписи
+            sheet.Cells["A2:F140"].Value = null;
 
             // 3. Подготовка и нормализация данных
             var allResults = data.DisciplineResults ?? new List<StudentDisciplineResult>();
@@ -254,48 +391,97 @@ namespace Dekauto.Export.Service.Domain.Services
             var rawCourseWorks = new List<StudentDisciplineResult>();
             var rawElectives = new List<StudentDisciplineResult>();
             var rawDisciplines = new List<StudentDisciplineResult>();
+            var rawCardOnlyUnmatched = new List<StudentDisciplineResult>();
 
             foreach (var item in allResults)
             {
+                if (IsProgramMasteringNoiseName(item.DisciplineName))
+                    continue;
+
+                if (item.IsCardOnlyUnmatchedPlan)
+                {
+                    rawCardOnlyUnmatched.Add(item);
+                    continue;
+                }
+
                 string nameLower = item.DisciplineName?.ToLower()?.Trim() ?? "";
                 string controlLower = item.ControlType?.ToLower()?.Trim() ?? "";
 
-                // Логика определения типа
                 bool isProjectPractice = nameLower.Contains("проектный практикум");
 
-                // 1. СНАЧАЛА проверяем Курсовые (по типу контроля или маркеру в названии)
-                // Добавили проверку на StartsWith("название дисциплины"), так как парсер так называет курсовые.
-                if (controlLower.Contains("курсовая") ||
+                // курсовые — как раньше, перекрывает привязку плана при конфликте
+                bool isCourseWork =
+                    controlLower.Contains("курсовая") ||
                     nameLower.Contains("курсовая") ||
-                    nameLower.StartsWith("название дисциплины"))
+                    nameLower.StartsWith("название дисциплины");
+
+                if (isCourseWork)
                 {
                     rawCourseWorks.Add(item);
+                    continue;
                 }
-                // 2. ЗАТЕМ проверяем Практики
-                else if ((nameLower.Contains("практик") || nameLower.Contains("научно-исследоват"))
-                         && !isProjectPractice)
+
+                var pb = item.PlanBucket;
+
+                if (pb == SupplementPlanBucket.Practice)
                 {
-                    rawPractices.Add(item);
+                    if (!isProjectPractice)
+                        rawPractices.Add(item);
+                    else
+                        rawDisciplines.Add(item);
+                    continue;
                 }
-                // 3. ГИА
-                else if (nameLower.Contains("государственн") ||
-                         nameLower.Contains("выпускная") ||
-                         nameLower.Contains("квалификационная") ||
-                         nameLower.Contains("защита вкр") ||
-                         nameLower.Contains("итоговый"))
-                {
-                    rawGia.Add(item);
-                }
-                // 4. Факультативы
-                else if (nameLower.Contains("факультатив") || nameLower.Contains("спортивного мастерства"))
+
+                if (pb == SupplementPlanBucket.Elective)
                 {
                     rawElectives.Add(item);
+                    continue;
                 }
-                // 5. Все остальное - Дисциплины
-                else
+
+                if (pb == SupplementPlanBucket.Gia)
+                {
+                    rawGia.Add(item);
+                    continue;
+                }
+
+                bool treatAsPractice =
+                    ((pb == SupplementPlanBucket.Discipline ||
+                       pb == SupplementPlanBucket.Unknown ||
+                       !pb.HasValue) &&
+                     IsLikelyPracticeBlockDisciplineName(item.DisciplineName) &&
+                     !isProjectPractice &&
+                     !IsProbableGiaDisciplineName(nameLower));
+
+                if (treatAsPractice)
+                {
+                    rawPractices.Add(item);
+                    continue;
+                }
+
+                bool treatAsGia =
+                    (pb == SupplementPlanBucket.Discipline ||
+                     pb == SupplementPlanBucket.Unknown ||
+                     !pb.HasValue) &&
+                    IsProbableGiaDisciplineName(nameLower) &&
+                    !IsLikelyPracticeBlockDisciplineName(item.DisciplineName) &&
+                    !isProjectPractice;
+
+                if (treatAsGia)
+                {
+                    rawGia.Add(item);
+                    continue;
+                }
+
+                if (pb == SupplementPlanBucket.Discipline)
                 {
                     rawDisciplines.Add(item);
+                    continue;
                 }
+
+                if (IsProbableGiaDisciplineName(nameLower))
+                    rawGia.Add(item);
+                else
+                    rawDisciplines.Add(item);
             }
 
             // 4. Агрегация и сортировка
@@ -303,89 +489,255 @@ namespace Dekauto.Export.Service.Domain.Services
             var practices = ProcessDisciplines(rawPractices);
             var electives = ProcessDisciplines(rawElectives);
             var giaResults = ProcessDisciplines(rawGia);
-            var courseWorks = ProcessDisciplines(rawCourseWorks); // Курсовые сортируем по семестру
+            var courseWorks = ProcessDisciplines(rawCourseWorks);
+            var cardOnlyTail = ProcessDisciplines(rawCardOnlyUnmatched)
+                .Where(x => !IsCardOnlyGarbageExportPlaceholder(x.DisciplineName))
+                .ToList();
+
+            var practicesOutsidePlanCanon = practices
+                .Where(p => !PracticeTitleLooksCanonicalFromPlanSheet(p.DisciplineName))
+                .ToList();
+            var practicesMain = practices
+                .Where(p => PracticeTitleLooksCanonicalFromPlanSheet(p.DisciplineName))
+                .ToList();
+
+            var manualReconciliationRows = new List<StudentDisciplineResult>();
+            manualReconciliationRows.AddRange(practicesOutsidePlanCanon);
+            foreach (var lone in cardOnlyTail)
+            {
+                if (manualReconciliationRows.Any(m =>
+                        string.Equals(m.DisciplineName?.Trim(), lone.DisciplineName?.Trim(),
+                            StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                manualReconciliationRows.Add(lone);
+            }
 
             int attentionRowCount =
                 disciplines.Count(x => x.RequiresManualValidation)
-                + practices.Count(x => x.RequiresManualValidation)
+                + practicesMain.Count(x => x.RequiresManualValidation)
                 + giaResults.Count(x => x.RequiresManualValidation)
                 + courseWorks.Count(x => x.RequiresManualValidation)
-                + electives.Count(x => x.RequiresManualValidation);
+                + electives.Count(x => x.RequiresManualValidation)
+                + manualReconciliationRows.Count;
 
-            // 5. Подсчет итогов
+            // для логики по умолчанию (до формул)
             double summedCredits = disciplines.Sum(x => ConvertToDouble(x.CreditUnits))
-                                + practices.Sum(x => ConvertToDouble(x.CreditUnits))
+                                + practicesMain.Sum(x => ConvertToDouble(x.CreditUnits))
                                 + giaResults.Sum(x => ConvertToDouble(x.CreditUnits));
-            double totalCredits = data.TargetProgramCredits ?? summedCredits;
+            double fallbackTotalCredits = data.TargetProgramCredits ?? summedCredits;
 
             double totalAudHours = disciplines.Sum(x => ConvertToDouble(x.AudHours))
-                                 + practices.Sum(x => ConvertToDouble(x.AudHours))
+                                 + practicesMain.Sum(x => ConvertToDouble(x.AudHours))
                                  + giaResults.Sum(x => ConvertToDouble(x.AudHours));
 
+            _currentRow = 2;
 
-            // 6. Последовательная запись
-            _currentRow = 2; // Данные начинаются со 2-й строки
-
-            // Блок 1: Дисциплины
             foreach (var item in disciplines)
             {
-                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
+                WriteDisciplineRow(
+                    item.DisciplineName,
+                    FormatCredits(item.CreditUnits),
+                    GetGradeText(item),
+                    requiresManualAttention: item.RequiresManualValidation,
+                    yellowAuxBlock: false);
             }
 
-            // Блок 2: Практики
-            if (practices.Any())
+            if (practicesMain.Any())
             {
-                double practiceCredits = practices.Sum(p => ConvertToDouble(p.CreditUnits));
+                double practiceCreditsSummed = practicesMain.Sum(p => ConvertToDouble(p.CreditUnits));
+                double practiceCreditsForHeaderRow = practiceCreditsSummed;
+                if (data.TargetPracticeCreditsFromPlan is double tPrac && tPrac > 0)
+                    practiceCreditsForHeaderRow = tPrac;
 
-                WriteDisciplineRow("Практики", FormatCredits(practiceCredits), Xmark);
-                WriteDisciplineRow("в том числе:", null, null);
+                int bundleRows = MeasureNameRowLines("Практики") + MeasureNameRowLines("в том числе:")
+                    + MeasureNameRowLines(practicesMain[0].DisciplineName);
+                AdvancePastFirstSheetPrintBandIfNeeded(bundleRows);
 
-                foreach (var item in practices)
+                WriteDisciplineRow(
+                    "Практики",
+                    practiceCreditsForHeaderRow > 0
+                        ? string.Format(CultureInfo.InvariantCulture, "{0} з.е.", practiceCreditsForHeaderRow)
+                        : FormatCredits(practiceCreditsSummed > 0 ? practiceCreditsSummed : null),
+                    Xmark,
+                    requiresManualAttention: false,
+                    yellowAuxBlock: true,
+                    skipPageBandAdjustment: true);
+
+                WriteDisciplineRow("в том числе:", null, null,
+                    requiresManualAttention: false,
+                    yellowAuxBlock: true,
+                    skipPageBandAdjustment: true);
+
+                foreach (var item in practicesMain)
                 {
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
+                    WriteDisciplineRow(
+                        item.DisciplineName,
+                        FormatCredits(item.CreditUnits),
+                        GetGradeText(item),
+                        requiresManualAttention: item.RequiresManualValidation,
+                        yellowAuxBlock: true);
                 }
             }
 
-            // Блок 3: ГИА
             if (giaResults.Any())
             {
-                double giaCredits = giaResults.Sum(g => ConvertToDouble(g.CreditUnits));
+                double giaCreditsSummed = giaResults.Sum(g => ConvertToDouble(g.CreditUnits));
+                double giaCreditsForHeaderRow = giaCreditsSummed;
+                if (giaCreditsForHeaderRow <= 0 &&
+                    data.TargetGiaCreditsFromPlan is double tGia &&
+                    tGia > 0)
+                {
+                    giaCreditsForHeaderRow = tGia;
+                }
 
-                WriteDisciplineRow("Государственная итоговая аттестация", FormatCredits(giaCredits), Xmark);
-                WriteDisciplineRow("в том числе:", null, null);
+                int giaBundle = MeasureNameRowLines("Государственная итоговая аттестация")
+                    + MeasureNameRowLines("в том числе:")
+                    + MeasureNameRowLines(giaResults[0].DisciplineName);
+                AdvancePastFirstSheetPrintBandIfNeeded(giaBundle);
+
+                WriteDisciplineRow(
+                    "Государственная итоговая аттестация",
+                    giaCreditsForHeaderRow > 0
+                        ? string.Format(CultureInfo.InvariantCulture, "{0} з.е.", giaCreditsForHeaderRow)
+                        : FormatCredits(giaCreditsSummed > 0 ? giaCreditsSummed : null),
+                    Xmark,
+                    requiresManualAttention: false,
+                    yellowAuxBlock: true,
+                    skipPageBandAdjustment: true);
+
+                WriteDisciplineRow("в том числе:", null, null,
+                    requiresManualAttention: false,
+                    yellowAuxBlock: true,
+                    skipPageBandAdjustment: true);
 
                 foreach (var item in giaResults)
                 {
-                    // Для элементов ГИА пишем название (там уже тема ВКР, если есть) и оценку
-                    // Кредиты для подпунктов ГИА обычно не ставятся
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
+                    WriteDisciplineRow(
+                        item.DisciplineName,
+                        FormatCredits(item.CreditUnits),
+                        GetGradeText(item),
+                        requiresManualAttention: item.RequiresManualValidation,
+                        yellowAuxBlock: true);
                 }
             }
 
-            // Блок 4: Объем образовательной программы (Итого)
-            WriteDisciplineRow("Объем образовательной программы", FormatCredits(totalCredits), Xmark);
-            WriteDisciplineRow("в том числе объем контактной работы обучающихся", null, null);
-            WriteDisciplineRow("во взаимодействии с преподавателем в академических часах:", FormatAudHours(totalAudHours), Xmark);
+            int volHeadingRows = MeasureNameRowLines("Объем образовательной программы");
+            AdvancePastFirstSheetPrintBandIfNeeded(volHeadingRows);
 
-            // Блок 5: Курсовые работы
-            foreach (var item in courseWorks)
+            string? sumCreditsDisplay = fallbackTotalCredits > 0
+                ? string.Format(CultureInfo.InvariantCulture, "{0} з.е.", fallbackTotalCredits)
+                : FormatCredits(null);
+
+            int rowVol = _currentRow;
+            WriteDisciplineRow("Объем образовательной программы", sumCreditsDisplay ?? Xmark, Xmark,
+                requiresManualAttention: false,
+                yellowAuxBlock: false,
+                skipPageBandAdjustment: true);
+
+            if (activeWorksheet != null)
             {
-                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
+                var cVol = activeWorksheet.Cells[rowVol, 3];
+                cVol.Formula = null;
+                cVol.Style.Numberformat.Format = "General";
+
+                object volShown = sumCreditsDisplay ?? Xmark;
+                if (data.TargetProgramCredits.HasValue)
+                    volShown = string.Format(CultureInfo.InvariantCulture, "{0} з.е.", data.TargetProgramCredits.Value);
+                cVol.Value = volShown;
+
+                activeWorksheet.Cells[rowVol, 4].Value = Xmark;
+
+                if (cVol.Comment != null)
+                {
+                    cVol.Comment.Text = cellComment;
+                    cVol.Comment.Author = commentAuthor;
+                }
+                else
+                    cVol.AddComment(cellComment, commentAuthor);
             }
 
-            // Блок 6: Факультативы
+            int contactHeadBundle = MeasureNameRowLines("в том числе объем контактной работы обучающихся")
+                + MeasureNameRowLines("во взаимодействии с преподавателем в академических часах:");
+            AdvancePastFirstSheetPrintBandIfNeeded(contactHeadBundle);
+
+            WriteDisciplineRow("в том числе объем контактной работы обучающихся", null, null,
+                requiresManualAttention: false,
+                yellowAuxBlock: false,
+                skipPageBandAdjustment: true);
+
+            int rowAud = _currentRow;
+            string? audShown = FormatAudHours(totalAudHours);
+            string contactCellText = audShown ?? Xmark;
+            if (data.TargetContactHoursFromPlan.HasValue)
+                contactCellText = string.Format(CultureInfo.InvariantCulture, "{0} ак. час.", data.TargetContactHoursFromPlan.Value);
+
+            WriteDisciplineRow("во взаимодействии с преподавателем в академических часах:",
+                contactCellText, Xmark,
+                requiresManualAttention: false,
+                yellowAuxBlock: false,
+                skipPageBandAdjustment: true);
+
+            if (activeWorksheet != null)
+            {
+                var cAud = activeWorksheet.Cells[rowAud, 3];
+                cAud.Formula = null;
+                cAud.Value = contactCellText;
+                cAud.Style.Numberformat.Format = "General";
+
+                activeWorksheet.Cells[rowAud, 4].Value = Xmark;
+
+                if (cAud.Comment != null)
+                {
+                    cAud.Comment.Text = cellComment;
+                    cAud.Comment.Author = commentAuthor;
+                }
+                else
+                    cAud.AddComment(cellComment, commentAuthor);
+            }
+
+            foreach (var item in courseWorks)
+            {
+                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item),
+                    requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true);
+            }
+
             if (electives.Any())
             {
-                WriteDisciplineRow("Факультативные дисциплины (модули)", null, null);
-                WriteDisciplineRow("в том числе:", null, null);
+                WriteDisciplineRow("Факультативные дисциплины (модули)", null, null,
+                    requiresManualAttention: false, yellowAuxBlock: true);
+
+                WriteDisciplineRow("в том числе:", null, null,
+                    requiresManualAttention: false, yellowAuxBlock: true);
 
                 foreach (var item in electives)
                 {
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item), item.RequiresManualValidation);
+                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item),
+                        requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true);
                 }
             }
 
+            if (manualReconciliationRows.Any())
+            {
+                _currentRow += 2;
+                WriteManualReconciliationBanner(
+                    "Неопределенные записи, требующие ручной проверки:");
+                foreach (var item in manualReconciliationRows.OrderBy(x => x.DisciplineName, StringComparer.OrdinalIgnoreCase))
+                {
+                    WriteDisciplineRow(
+                        item.DisciplineName,
+                        FormatCredits(item.CreditUnits),
+                        GetGradeText(item),
+                        requiresManualAttention: true,
+                        yellowAuxBlock: true,
+                        columnATextOverride: "!");
+                }
+            }
+
+            if (activeWorksheet != null)
+                activeWorksheet.Cells[134, 6].Value = "последняя строка правой таблицы";
+
             _logger.LogInformation("Лист освоения программы: строк дисциплин с пометкой для проверки оператора: {Count}", attentionRowCount);
+
 
             activeWorksheet = null;
         }
@@ -407,9 +759,16 @@ namespace Dekauto.Export.Service.Domain.Services
                                      .ThenByDescending(x => x.Year ?? 0)
                                      .First();
 
+                    SupplementPlanBucket? pickBucket = g
+                        .Select(x => x.PlanBucket)
+                        .FirstOrDefault(b => b.HasValue && b.Value != SupplementPlanBucket.Unknown);
+                    if (!pickBucket.HasValue)
+                        pickBucket = g.Select(x => x.PlanBucket).FirstOrDefault(x => x.HasValue);
+
                     return new StudentDisciplineResult
                     {
                         DisciplineName = g.Key,
+                        PlanBucket = pickBucket ?? lastEntry.PlanBucket,
                         CreditUnits = g.Sum(x => ConvertToDouble(x.CreditUnits)),
                         AudHours = g.Sum(x => ConvertToDouble(x.AudHours)),
                         Score = lastEntry.Score,
@@ -417,7 +776,8 @@ namespace Dekauto.Export.Service.Domain.Services
                         Semester = lastEntry.Semester,
                         Year = lastEntry.Year,
                         PlanOrder = g.Min(x => x.PlanOrder),
-                        RequiresManualValidation = g.Any(x => x.RequiresManualValidation)
+                        RequiresManualValidation = g.Any(x => x.RequiresManualValidation),
+                        IsCardOnlyUnmatchedPlan = g.Any(x => x.IsCardOnlyUnmatchedPlan)
                     };
                 })
                 .OrderBy(x => x.PlanOrder ?? int.MaxValue)
@@ -427,43 +787,49 @@ namespace Dekauto.Export.Service.Domain.Services
         }
 
         /// <summary>
-        /// Запись строки данных (или заголовка) в таблицу
+        /// Запись строки данных (или заголовка) в таблицу.
+        /// Колонка E — формула LEN(B…) как в шаблоне РИД; F может быть пустая до служебных строк.
         /// </summary>
-        private void WriteDisciplineRow(string? name, string? creditsValue, string? gradeValue, bool highlightAttention = false)
+        private void WriteDisciplineRow(
+            string? name,
+            string? creditsValue,
+            string? gradeValue,
+            bool requiresManualAttention,
+            bool yellowAuxBlock,
+            bool skipPageBandAdjustment = false,
+            string? columnATextOverride = null)
         {
             if (string.IsNullOrWhiteSpace(name)) return;
 
-            // 1. Разбиваем название на строки по 75 символов
             var nameLines = SplitText(name, 75);
             int rowsNeeded = nameLines.Count;
 
-            // 2. Проверка пагинации
-            int endRow = _currentRow + rowsNeeded - 1;
-
-            // 67 - последняя строка 1-го листа
-            // 134 - последняя строка 2-го листа
-            if (_currentRow <= 67 && endRow > 67)
-            {
-                _currentRow = 68;
-            }
-            else if (_currentRow <= 134 && endRow > 134)
-            {
-                _currentRow = 135;
-            }
+            if (!skipPageBandAdjustment)
+                AdvancePastFirstSheetPrintBandIfNeeded(rowsNeeded);
 
             int rowStart = _currentRow;
 
-            // 3. Запись данных
             for (int i = 0; i < rowsNeeded; i++)
             {
                 int currentRowToWrite = _currentRow + i;
 
-                // Столбец B (2): Название
-                // Используем SetCellValue без авто-комментариев для массовой вставки
+                if (activeWorksheet != null)
+                {
+                    if (columnATextOverride != null)
+                        activeWorksheet.Cells[currentRowToWrite, 1].Value = columnATextOverride;
+                    else
+                        activeWorksheet.Cells[currentRowToWrite, 1].Value = currentRowToWrite - 1;
+                }
+
                 SetCellValue(currentRowToWrite, 2, nameLines[i]);
 
-                // Столбцы C (3) и D (4): Кредиты и Оценка
-                // Пишутся ТОЛЬКО в последней строке блока названия
+                if (activeWorksheet != null)
+                {
+                    var eCell = activeWorksheet.Cells[currentRowToWrite, 5];
+                    eCell.Formula = $"LEN(B{currentRowToWrite})";
+                    eCell.Style.Numberformat.Format = "General";
+                }
+
                 if (i == rowsNeeded - 1)
                 {
                     SetCellValue(currentRowToWrite, 3, creditsValue);
@@ -471,13 +837,47 @@ namespace Dekauto.Export.Service.Domain.Services
                 }
             }
 
-            if (highlightAttention && activeWorksheet != null)
-            {
-                int rowEnd = rowStart + rowsNeeded - 1;
+            int rowEnd = rowStart + rowsNeeded - 1;
+
+            if ((requiresManualAttention || yellowAuxBlock) && activeWorksheet != null)
                 ApplyAttentionRowFill(rowStart, rowEnd);
-            }
 
             _currentRow += rowsNeeded;
+        }
+
+        private void WriteManualReconciliationBanner(string headingText)
+        {
+            if (string.IsNullOrWhiteSpace(headingText) || activeWorksheet == null)
+                return;
+
+            var lines = SplitText(headingText.Trim(), 75);
+            int rowsNeeded = lines.Count;
+            AdvancePastFirstSheetPrintBandIfNeeded(rowsNeeded);
+            int rowStart = _currentRow;
+
+            for (int i = 0; i < rowsNeeded; i++)
+            {
+                int rw = _currentRow + i;
+                activeWorksheet.Cells[rw, 1].Value = "!";
+
+                SetCellValue(rw, 2, lines[i]);
+                activeWorksheet.Cells[rw, 2].Style.Font.Bold = true;
+
+                var eCell = activeWorksheet.Cells[rw, 5];
+                eCell.Formula = $"LEN(B{rw})";
+                eCell.Style.Numberformat.Format = "General";
+            }
+
+            int rowEnd = rowStart + rowsNeeded - 1;
+            ApplyAttentionRowFill(rowStart, rowEnd);
+            _currentRow += rowsNeeded;
+        }
+
+        private void ApplyAttentionFillToHonorStatusRow(string cellAddr)
+        {
+            if (activeWorksheet == null) return;
+            int row = activeWorksheet.Cells[cellAddr].Start.Row;
+            ApplyAttentionRowFill(row, row);
         }
 
         private void ApplyAttentionRowFill(int rowFrom, int rowTo)
@@ -486,7 +886,7 @@ namespace Dekauto.Export.Service.Domain.Services
             var fillColor = Color.FromArgb(255, 248, 210);
             for (int r = rowFrom; r <= rowTo; r++)
             {
-                for (int col = 2; col <= 4; col++)
+                for (int col = 2; col <= 6; col++)
                 {
                     var cell = activeWorksheet.Cells[r, col];
                     cell.Style.Fill.PatternType = ExcelFillStyle.Solid;
@@ -496,6 +896,35 @@ namespace Dekauto.Export.Service.Domain.Services
         }
 
         
+
+        private static bool PracticeTitleLooksCanonicalFromPlanSheet(string? disciplineName)
+        {
+            if (string.IsNullOrWhiteSpace(disciplineName))
+                return false;
+            var t = disciplineName.Trim();
+            return t.StartsWith("Учебная практика,", StringComparison.OrdinalIgnoreCase)
+                || t.StartsWith("Производственная практика,", StringComparison.OrdinalIgnoreCase)
+                || t.StartsWith("Преддипломная практика,", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private int MeasureNameRowLines(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return 0;
+            return SplitText(name.Trim(), 75).Count;
+        }
+
+        /// <summary>Граница печати: строка Excel 67 — последняя «верхней» области; не резать текст посередине.</summary>
+        private void AdvancePastFirstSheetPrintBandIfNeeded(int rowsNeeded)
+        {
+            if (rowsNeeded <= 0)
+                return;
+            int endRow = _currentRow + rowsNeeded - 1;
+            if (_currentRow <= 67 && endRow > 67)
+                _currentRow = 68;
+            else if (_currentRow <= 134 && endRow > 134)
+                _currentRow = 135;
+        }
 
         private List<string> SplitText(string text, int limit)
         {
@@ -585,13 +1014,13 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             double d = ConvertToDouble(credits);
             if (d == 0) return Xmark;
-            return $"{d} з.е.";
+            return string.Format(CultureInfo.InvariantCulture, "{0} з.е.", d);
         }
 
         private string? FormatAudHours(double audHours)
         {
             if (audHours == 0) return Xmark;
-            return $"{audHours} ак. час.";
+            return string.Format(CultureInfo.InvariantCulture, "{0} ак. час.", audHours);
         }
 
         private double ConvertToDouble(object? val)
