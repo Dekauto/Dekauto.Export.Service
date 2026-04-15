@@ -205,7 +205,7 @@ namespace Dekauto.Export.Service.Domain.Services
             var (templatePath, e1, m1) = ChooseTemplateFile(request.manufacturer, request.educationLevel);
             _logger.LogInformation($"Найден файл шаблона: {m1}, {e1}");
 
-            var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.data);
+            var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.data, request.educationLevel);
             _logger.LogInformation($"Приложение диплома сформировано.");
 
             string fileName = $"Приложение диплома {request.data.Surname} {request.data.Name} {request.data.Patronymic} {m1} {e1}";
@@ -233,7 +233,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
         }
 
-        private async Task<MemoryStream> FillDiplomaSupplementAsync(string templatePath, DiplomaSupplementData supplementData)
+        private async Task<MemoryStream> FillDiplomaSupplementAsync(string templatePath, DiplomaSupplementData supplementData, string? educationLevel)
         {
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
 
@@ -241,7 +241,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
             using (var package = new ExcelPackage(new FileInfo(templatePath)))
             {
-                FillExcel(supplementData, package);
+                FillExcel(supplementData, package, educationLevel);
                 await package.SaveAsAsync(diplomaSupplement); //Сохраняем файл
             }
             diplomaSupplement.Position = 0; //Сбрасываем позицию
@@ -249,7 +249,7 @@ namespace Dekauto.Export.Service.Domain.Services
             return diplomaSupplement;
         }
 
-        private void FillExcel(DiplomaSupplementData data, ExcelPackage package)
+        private void FillExcel(DiplomaSupplementData data, ExcelPackage package, string? educationLevel)
         {
             if (package.Workbook.Worksheets.Count == 0)
                 throw new InvalidOperationException("Файл шаблона не содержит листов");
@@ -285,7 +285,7 @@ namespace Dekauto.Export.Service.Domain.Services
             if (otherDataSheet != null)
             {
                 _logger.LogInformation($"Начинаем заполнение страницы доп. сведений (лист \"{otherDataSheet.Name}\")...");
-                FillOtherDataSheet(otherDataSheet, data);
+                FillOtherDataSheet(otherDataSheet, data, educationLevel);
                 _logger.LogInformation("Заполнение страницы доп. сведений завершено.");
             }
             else
@@ -333,14 +333,68 @@ namespace Dekauto.Export.Service.Domain.Services
             activeWorksheet = null;
         }
 
-        private void FillOtherDataSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
+        private void FillOtherDataSheet(ExcelWorksheet sheet, DiplomaSupplementData data, string? educationLevel)
         {
             activeWorksheet = sheet;
             sheet.Protection.IsProtected = false;
-            if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetOpopName))
-                SetCellValue("B6", data.SupplementAdditionalSheetOpopName);
-            if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetStudyFormLine))
-                SetCellValue("B7", data.SupplementAdditionalSheetStudyFormLine);
+
+            var b5Probe = sheet.Cells["B5"].Text?.Trim() ?? "";
+            var isSbmLayout = !string.IsNullOrWhiteSpace(b5Probe);
+            var isSpecialist = string.Equals(educationLevel?.Trim(), "specialist", StringComparison.OrdinalIgnoreCase);
+
+            string? nameLine = null;
+            var opopRaw = data.SupplementAdditionalSheetOpopName;
+            if (!string.IsNullOrWhiteSpace(opopRaw))
+            {
+                var t = opopRaw.Trim();
+                nameLine = isSpecialist ? "Специализация: " + t : t;
+            }
+
+            var nameWrapped = string.IsNullOrWhiteSpace(nameLine)
+                ? null
+                : string.Join(Environment.NewLine, SplitText(nameLine.Trim(), 95));
+
+            if (isSbmLayout)
+            {
+                if (isSpecialist)
+                {
+                    if (!string.IsNullOrWhiteSpace(nameWrapped))
+                        SetCellValue("B5", nameWrapped);
+                    if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetStudyFormLine))
+                        SetCellValue("B6", data.SupplementAdditionalSheetStudyFormLine);
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(nameWrapped))
+                        SetCellValue("B6", nameWrapped);
+                    if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetStudyFormLine))
+                        SetCellValue("B7", data.SupplementAdditionalSheetStudyFormLine);
+                }
+            }
+            else
+            {
+                if (isSpecialist)
+                {
+                    if (!string.IsNullOrWhiteSpace(nameWrapped))
+                        SetCellValue("B2", nameWrapped);
+                    if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetStudyFormLine))
+                        SetCellValue("B3", data.SupplementAdditionalSheetStudyFormLine);
+                }
+                else
+                {
+                    if (!string.IsNullOrWhiteSpace(nameWrapped))
+                        SetCellValue("B3", nameWrapped);
+                    if (!string.IsNullOrWhiteSpace(data.SupplementAdditionalSheetStudyFormLine))
+                        SetCellValue("B4", data.SupplementAdditionalSheetStudyFormLine);
+                }
+            }
+
+            _logger.LogInformation(
+                "Лист доп. сведений: сценарий={Layout}, уровень={Level}, специалитет={Spec}",
+                isSbmLayout ? "СБМ(B5 не пусто)" : "верхние строки(B5 пусто)",
+                educationLevel ?? "",
+                isSpecialist);
+
             activeWorksheet = null;
         }
 
