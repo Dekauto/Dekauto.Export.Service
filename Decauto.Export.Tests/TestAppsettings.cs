@@ -26,7 +26,7 @@ namespace Dekauto.Export.Tests
         public void TestCardName() 
         {
             //Arrange
-            var expectedCardName = "УЧЕБНАЯ_КАРТОЧКА_студента.xlsx";
+            var expectedCardName = "Templates/card/card_template.xlsx";
 
             //Act
             var actualCardName = _configuration["ExportCardName"];

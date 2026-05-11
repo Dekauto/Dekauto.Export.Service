@@ -21,6 +21,8 @@ namespace Dekauto.Export.Service.Domain.Services
         /// <summary>Плейсхолдер в столбце C/D как в образце РИД (кириллическое «х»).</summary>
         private const string Xmark = "\u0445"; // кирилл. х
 
+        private const string ManualReviewTail = " (ТРЕБУЕТ ПРОВЕРКИ)";
+
         private static readonly Dictionary<string, string> KnownTextGradeMap = new(StringComparer.OrdinalIgnoreCase)
         {
             { "отлично", "отлично" },
@@ -208,7 +210,13 @@ namespace Dekauto.Export.Service.Domain.Services
             var diplomaFile = await FillDiplomaSupplementAsync(templatePath, request.data, request.educationLevel);
             _logger.LogInformation($"Приложение диплома сформировано.");
 
-            string fileName = $"Приложение диплома {request.data.Surname} {request.data.Name} {request.data.Patronymic} {m1} {e1}";
+            var fileNameParts = new List<string?> { "Приложение диплома", request.data.Surname, request.data.Name };
+            var patronymicTrim = request.data.Patronymic?.Trim();
+            if (!string.IsNullOrEmpty(patronymicTrim) && patronymicTrim != "-" && patronymicTrim != "\u2013")
+                fileNameParts.Add(patronymicTrim);
+            fileNameParts.Add(m1);
+            fileNameParts.Add(e1);
+            string fileName = string.Join(" ", fileNameParts.Where(static s => !string.IsNullOrWhiteSpace(s)));
 
             return (diplomaFile, fileName);
         }
@@ -255,6 +263,9 @@ namespace Dekauto.Export.Service.Domain.Services
                 throw new InvalidOperationException("Файл шаблона не содержит листов");
             activeWorksheet = null;
 
+            foreach (ExcelWorksheet s in package.Workbook.Worksheets)
+                s.Protection.IsProtected = false;
+
             var ws = package.Workbook.Worksheets;
             var diplomaSheet = ws.Where(w => w.Name.Trim()
                 .Contains("диплом", StringComparison.OrdinalIgnoreCase)) // ищем "Диплом"
@@ -296,9 +307,6 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             activeWorksheet = sheet;
 
-            // Снимаем защиту, если она есть
-            sheet.Protection.IsProtected = false;
-
             if (data is null || data.DiplomaWithHonors is null)
             {
                 _logger.LogWarning("Статус диплома \"с отличием\" не найден, пропускаем...");
@@ -315,17 +323,19 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             activeWorksheet = sheet;
 
-            // Снимаем защиту, если она есть
-            sheet.Protection.IsProtected = false;
-
             SetCellValue("B3", data.Surname);
             SetCellValue("B4", data.Name);
-            SetCellValue("B5", data.Patronymic);
+            SetCellValue("B5", OwnerSheetPatronymicCellValue(data.Patronymic));
             SetCellValue("B6", data.BirthdayDate);
             SetCellValue("B8", MapEducationDocumentForSupplementOwnerB8(data.EducationReceived));
             SetCellValue("B9", data.EducationReceivedDate is not null
                 ? $"{data.EducationReceivedDate.Value.Year} год"
                 : null);
+            if (!string.IsNullOrWhiteSpace(data.SupplementOwnerQualification))
+            {
+                SetCellValue("B11", data.SupplementOwnerQualification);
+                ApplyAttentionFillToHonorStatusRow("B11");
+            }
             SetCellValue("B12", data.DiplomaWithHonors == true ? "с отличием" : null);
             ApplyAttentionFillToHonorStatusRow("B12");
             SetCellValue("B14", data.CourseOfTraining);
@@ -336,7 +346,6 @@ namespace Dekauto.Export.Service.Domain.Services
         private void FillOtherDataSheet(ExcelWorksheet sheet, DiplomaSupplementData data, string? educationLevel)
         {
             activeWorksheet = sheet;
-            sheet.Protection.IsProtected = false;
 
             var b5Probe = sheet.Cells["B5"].Text?.Trim() ?? "";
             var isSbmLayout = !string.IsNullOrWhiteSpace(b5Probe);
@@ -426,18 +435,23 @@ namespace Dekauto.Export.Service.Domain.Services
             return s;
         }
 
+        private static object OwnerSheetPatronymicCellValue(string? patronymic)
+        {
+            var t = patronymic?.Trim() ?? "";
+            if (t.Length == 0 || t == "-" || t == "\u2013")
+                return " ";
+            return t;
+        }
+
         private void FillProgramMasteringSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
         {
             activeWorksheet = sheet;
             _logger.LogInformation("Заполнение листа освоения программы...");
 
-            // 1. Снимаем защиту с листа, чтобы можно было редактировать/удалять комментарии
-            sheet.Protection.IsProtected = false;
-
-            // 2. Очистка данных; E — как в шаблоне РИД, формула LEN(B), F — служебные надписи
+            // 1. Очистка данных; E — как в шаблоне РИД, формула LEN(B), F — служебные надписи
             sheet.Cells["A2:F140"].Value = null;
 
-            // 3. Подготовка и нормализация данных
+            // 2. Подготовка и нормализация данных
             var allResults = data.DisciplineResults ?? new List<StudentDisciplineResult>();
 
             var rawPractices = new List<StudentDisciplineResult>();
@@ -538,7 +552,7 @@ namespace Dekauto.Export.Service.Domain.Services
                     rawDisciplines.Add(item);
             }
 
-            // 4. Агрегация и сортировка
+            // 3. Агрегация и сортировка
             var disciplines = ProcessDisciplines(rawDisciplines);
             var practices = ProcessDisciplines(rawPractices);
             var electives = ProcessDisciplines(rawElectives);
@@ -590,8 +604,8 @@ namespace Dekauto.Export.Service.Domain.Services
             {
                 WriteDisciplineRow(
                     item.DisciplineName,
-                    FormatCredits(item.CreditUnits),
-                    GetGradeText(item),
+                    FormatCreditsCell(item),
+                    FormatGradeCell(item),
                     requiresManualAttention: item.RequiresManualValidation,
                     yellowAuxBlock: false);
             }
@@ -626,8 +640,8 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     WriteDisciplineRow(
                         item.DisciplineName,
-                        FormatCredits(item.CreditUnits),
-                        GetGradeText(item),
+                        FormatCreditsCell(item),
+                        FormatGradeCell(item),
                         requiresManualAttention: item.RequiresManualValidation,
                         yellowAuxBlock: true);
                 }
@@ -668,8 +682,8 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     WriteDisciplineRow(
                         item.DisciplineName,
-                        FormatCredits(item.CreditUnits),
-                        GetGradeText(item),
+                        FormatCreditsCell(item),
+                        FormatGradeCell(item),
                         requiresManualAttention: item.RequiresManualValidation,
                         yellowAuxBlock: true);
                 }
@@ -751,7 +765,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
             foreach (var item in courseWorks)
             {
-                WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item),
+                WriteDisciplineRow(item.DisciplineName, FormatCreditsCell(item), FormatGradeCell(item),
                     requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true);
             }
 
@@ -765,7 +779,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
                 foreach (var item in electives)
                 {
-                    WriteDisciplineRow(item.DisciplineName, FormatCredits(item.CreditUnits), GetGradeText(item),
+                    WriteDisciplineRow(item.DisciplineName, FormatCreditsCell(item), FormatGradeCell(item),
                         requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true);
                 }
             }
@@ -779,8 +793,8 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     WriteDisciplineRow(
                         item.DisciplineName,
-                        FormatCredits(item.CreditUnits),
-                        GetGradeText(item),
+                        FormatCreditsCell(item),
+                        FormatGradeCell(item),
                         requiresManualAttention: true,
                         yellowAuxBlock: true,
                         columnATextOverride: "!");
@@ -1007,11 +1021,26 @@ namespace Dekauto.Export.Service.Domain.Services
             return result;
         }
 
-        private string? GetGradeText(StudentDisciplineResult result)
+        private string? FormatCreditsCell(StudentDisciplineResult item)
         {
-            if (result.RequiresManualValidation)
-                return "ТРЕБУЕТ ПРОВЕРКИ";
+            var baseText = FormatCredits(item.CreditUnits);
+            if (!item.RequiresManualValidation)
+                return baseText;
+            return (baseText ?? Xmark) + ManualReviewTail;
+        }
 
+        private string? FormatGradeCell(StudentDisciplineResult item)
+        {
+            var baseText = GetGradeTextCore(item);
+            if (!item.RequiresManualValidation)
+                return baseText;
+            if (string.Equals(baseText, "ТРЕБУЕТ ПРОВЕРКИ", StringComparison.Ordinal))
+                return baseText;
+            return (baseText ?? Xmark) + ManualReviewTail;
+        }
+
+        private string? GetGradeTextCore(StudentDisciplineResult result)
+        {
             string scoreStr = result.Score?.ToString()?.Trim() ?? "";
             string controlType = result.ControlType?.ToLower()?.Trim() ?? "";
 

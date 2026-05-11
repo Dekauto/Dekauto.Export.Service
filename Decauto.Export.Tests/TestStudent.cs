@@ -1,9 +1,11 @@
 using Dekauto.Export.Service.API.Controllers;
 using Dekauto.Export.Service.Domain.Entities;
 using Dekauto.Export.Service.Domain.Interfaces;
+using Dekauto.Export.Service.Domain.Utils;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace Dekauto.Export.Tests
@@ -13,6 +15,7 @@ namespace Dekauto.Export.Tests
     {
         private Mock<IStudentsCardService> _studentsService;
         private Mock<ILogger<StudentCardsController>> _logger;
+        private readonly IExportApiHelper _apiHelper = new ExportApiHelper();
         private StudentCardsController _controller;
 
         [TestInitialize]
@@ -20,7 +23,7 @@ namespace Dekauto.Export.Tests
         {
             _studentsService = new Mock<IStudentsCardService>();
             _logger = new Mock<ILogger<StudentCardsController>>();
-            _controller = new StudentCardsController(_studentsService.Object, _logger.Object);
+            _controller = new StudentCardsController(_studentsService.Object, _logger.Object, _apiHelper);
         }
 
         [TestMethod]
