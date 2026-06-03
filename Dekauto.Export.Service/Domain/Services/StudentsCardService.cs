@@ -274,11 +274,11 @@ namespace Dekauto.Export.Service.Domain.Services
                 // Столбец 2: название дисциплины
                 worksheet.Cells[currentRow, 2].Value = discipline.DisciplineName;
 
-                // Столбец 3: зачетные единицы
-                if (discipline.CreditUnits.HasValue)
-                    worksheet.Cells[currentRow, 3].Value = discipline.CreditUnits.Value;
+                // Столбец 4: всего академических часов (з.е. рассчитываются формулами шаблона)
+                if (discipline.TotalHours.HasValue)
+                    worksheet.Cells[currentRow, 4].Value = discipline.TotalHours.Value;
 
-                // Столбец 5: аудиторные часы
+                // Столбец 5: контактные (аудиторные) часы
                 if (discipline.AudHours.HasValue)
                     worksheet.Cells[currentRow, 5].Value = discipline.AudHours.Value;
 
@@ -352,7 +352,8 @@ namespace Dekauto.Export.Service.Domain.Services
         {
             return !string.IsNullOrEmpty(discipline.DisciplineName) ||
                    !string.IsNullOrEmpty(discipline.Score) ||
-                   discipline.CreditUnits.HasValue ||
+                   discipline.TotalHours.HasValue ||
+                   discipline.AudHours.HasValue ||
                    !string.IsNullOrEmpty(discipline.ControlType);
         }
 
