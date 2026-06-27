@@ -274,6 +274,15 @@ namespace Dekauto.Export.Service.Domain.Services
                 // Столбец 2: название дисциплины
                 worksheet.Cells[currentRow, 2].Value = discipline.DisciplineName;
 
+                // Столбец 3: з.е. — для базовой физической культуры ставим «X» (латиница)
+                if (string.Equals(
+                        discipline.DisciplineName?.Trim(),
+                        "базовая физическая культура",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    worksheet.Cells[currentRow, 3].Value = "X";
+                }
+
                 // Столбец 4: всего академических часов (з.е. рассчитываются формулами шаблона)
                 if (discipline.TotalHours.HasValue)
                     worksheet.Cells[currentRow, 4].Value = discipline.TotalHours.Value;
@@ -362,33 +371,23 @@ namespace Dekauto.Export.Service.Domain.Services
             var courseWork = disciplines
                 .FirstOrDefault(d => d.ControlType?.ToLower().Trim() == "курсовая");
 
-            if (courseWork != null && !string.IsNullOrEmpty(courseWork.DisciplineName))
+            if (courseWork == null)
+                return;
+
+            // Оценка в строке scoreRow на столбце 8 (название курсовой не выводим)
+            if (!string.IsNullOrEmpty(courseWork.Score))
             {
-                // Название курсовой работы в объединенных ячейках столбцов 3-12
-                var cellRange = worksheet.Cells[nameRow, 3, nameRow, 12];
-                if (!cellRange.Merge)
-                {
-                    cellRange.Merge = true;
-                }
-                worksheet.Cells[nameRow, 3].Value = courseWork.DisciplineName;
-
-                // Оценка в строке scoreRow на столбце 8
-                if (!string.IsNullOrEmpty(courseWork.Score))
-                {
-                    var courseScoreNum = ParseScoreNumeric(courseWork.Score);
-                    if (courseScoreNum.HasValue)
-                        worksheet.Cells[scoreRow, 8].Value = courseScoreNum.Value;
-                    else
-                        worksheet.Cells[scoreRow, 8].Value = courseWork.Score;
-                }
-
-                // Интерпретация в строке scoreRow на столбце 9 (как для не-зачета: экзамен, контрольная)
-                var interpretation = GetInterpretationForNonCredit(courseWork.Score);
-                if (!string.IsNullOrEmpty(interpretation))
-                {
-                    worksheet.Cells[scoreRow, 9].Value = interpretation;
-                }
+                var courseScoreNum = ParseScoreNumeric(courseWork.Score);
+                if (courseScoreNum.HasValue)
+                    worksheet.Cells[scoreRow, 8].Value = courseScoreNum.Value;
+                else
+                    worksheet.Cells[scoreRow, 8].Value = courseWork.Score;
             }
+
+            // Интерпретация в строке scoreRow на столбце 9 (как для не-зачета: экзамен, контрольная)
+            var interpretation = GetInterpretationForNonCredit(courseWork.Score);
+            if (!string.IsNullOrEmpty(interpretation))
+                worksheet.Cells[scoreRow, 9].Value = interpretation;
         }
 
         private string GetInterpretationForNonCredit(string? scoreStr)
