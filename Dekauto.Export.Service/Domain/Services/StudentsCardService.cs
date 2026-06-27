@@ -3,18 +3,54 @@ using Dekauto.Export.Service.Domain.Interfaces;
 using OfficeOpenXml;
 using System.Globalization;
 using System.IO.Compression;
+using System.Text.RegularExpressions;
 
 namespace Dekauto.Export.Service.Domain.Services
 {
     public class StudentsCardService : IStudentsCardService
     {
+        private const string ReviewMarkerText = "ТРЕБУЕТ ПРОВЕРКИ";
+        private static readonly Regex ReviewMarkerRegex =
+            new(@"\s*\(\s*ТРЕБУЕТ\s+ПРОВЕРКИ\s*\)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
         private IConfiguration _configuration;
         private string exportCardName;
+        private readonly string commentAuthor;
         public StudentsCardService(IConfiguration configuration)
         {
             _configuration = configuration;
             exportCardName = _configuration.GetValue<string>("ExportCardName") ?? throw new ArgumentNullException(nameof(exportCardName));
+            commentAuthor = _configuration.GetValue<string>("ExportCommentAuthor") ?? "Dekauto";
 
+        }
+
+        private static bool DisciplineNeedsReview(StudentDisciplineResult discipline)
+        {
+            if (discipline.RequiresManualValidation)
+                return true;
+            var name = discipline.DisciplineName;
+            return !string.IsNullOrEmpty(name)
+                && name.Contains(ReviewMarkerText, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string? StripReviewMarker(string? name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return name;
+            return ReviewMarkerRegex.Replace(name, string.Empty).Trim();
+        }
+
+        private void AddReviewComment(ExcelRange cell)
+        {
+            if (cell.Comment != null)
+            {
+                cell.Comment.Text = ReviewMarkerText;
+                cell.Comment.Author = commentAuthor;
+            }
+            else
+            {
+                cell.AddComment(ReviewMarkerText, commentAuthor);
+            }
         }
         public async Task<MemoryStream> ConvertStudentsToExcel(List<Student> students)
         {
@@ -271,12 +307,18 @@ namespace Dekauto.Export.Service.Domain.Services
 
             foreach (var discipline in regularDisciplines.Take(endRow - startRow + 1))
             {
-                // Столбец 2: название дисциплины
-                worksheet.Cells[currentRow, 2].Value = discipline.DisciplineName;
+                // Столбец 2: название дисциплины (без технической метки проверки).
+                // Если дисциплина требует проверки — добавляем примечание к ячейке (автор Dekauto),
+                // а в самом тексте названия метку не оставляем.
+                var needsReview = DisciplineNeedsReview(discipline);
+                var displayName = StripReviewMarker(discipline.DisciplineName);
+                worksheet.Cells[currentRow, 2].Value = displayName;
+                if (needsReview)
+                    AddReviewComment(worksheet.Cells[currentRow, 2]);
 
                 // Столбец 3: з.е. — для базовой физической культуры ставим «X» (латиница)
                 if (string.Equals(
-                        discipline.DisciplineName?.Trim(),
+                        displayName?.Trim(),
                         "базовая физическая культура",
                         StringComparison.OrdinalIgnoreCase))
                 {
