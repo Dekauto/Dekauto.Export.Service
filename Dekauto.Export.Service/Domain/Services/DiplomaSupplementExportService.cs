@@ -664,47 +664,45 @@ namespace Dekauto.Export.Service.Domain.Services
                 }
             }
 
-            if (giaResults.Any())
+            double giaCreditsSummed = giaResults.Sum(g => ConvertToDouble(g.CreditUnits));
+            double giaCreditsForHeaderRow = giaCreditsSummed;
+            if (giaCreditsForHeaderRow <= 0 &&
+                data.TargetGiaCreditsFromPlan is double tGia &&
+                tGia > 0)
             {
-                double giaCreditsSummed = giaResults.Sum(g => ConvertToDouble(g.CreditUnits));
-                double giaCreditsForHeaderRow = giaCreditsSummed;
-                if (giaCreditsForHeaderRow <= 0 &&
-                    data.TargetGiaCreditsFromPlan is double tGia &&
-                    tGia > 0)
-                {
-                    giaCreditsForHeaderRow = tGia;
-                }
+                giaCreditsForHeaderRow = tGia;
+            }
 
-                int giaBundle = MeasureNameRowLines("Государственная итоговая аттестация")
-                    + MeasureNameRowLines("в том числе:")
-                    + MeasureNameRowLines(giaResults[0].DisciplineName);
-                AdvancePastFirstSheetPrintBandIfNeeded(giaBundle);
+            int giaBundle = MeasureNameRowLines("Государственная итоговая аттестация")
+                + MeasureNameRowLines("в том числе:");
+            if (giaResults.Any())
+                giaBundle += MeasureNameRowLines(giaResults[0].DisciplineName);
+            AdvancePastFirstSheetPrintBandIfNeeded(giaBundle);
 
+            WriteDisciplineRow(
+                "Государственная итоговая аттестация",
+                giaCreditsForHeaderRow > 0
+                    ? string.Format(CultureInfo.InvariantCulture, "{0} з.е.", giaCreditsForHeaderRow)
+                    : FormatCredits(giaCreditsSummed > 0 ? giaCreditsSummed : null),
+                Xmark,
+                requiresManualAttention: false,
+                yellowAuxBlock: true,
+                skipPageBandAdjustment: true);
+
+            WriteDisciplineRow("в том числе:", null, null,
+                requiresManualAttention: false,
+                yellowAuxBlock: true,
+                skipPageBandAdjustment: true);
+
+            foreach (var item in giaResults)
+            {
                 WriteDisciplineRow(
-                    "Государственная итоговая аттестация",
-                    giaCreditsForHeaderRow > 0
-                        ? string.Format(CultureInfo.InvariantCulture, "{0} з.е.", giaCreditsForHeaderRow)
-                        : FormatCredits(giaCreditsSummed > 0 ? giaCreditsSummed : null),
-                    Xmark,
-                    requiresManualAttention: false,
+                    item.DisciplineName,
+                    FormatCreditsCell(item),
+                    FormatGradeCell(item),
+                    requiresManualAttention: item.RequiresManualValidation,
                     yellowAuxBlock: true,
-                    skipPageBandAdjustment: true);
-
-                WriteDisciplineRow("в том числе:", null, null,
-                    requiresManualAttention: false,
-                    yellowAuxBlock: true,
-                    skipPageBandAdjustment: true);
-
-                foreach (var item in giaResults)
-                {
-                    WriteDisciplineRow(
-                        item.DisciplineName,
-                        FormatCreditsCell(item),
-                        FormatGradeCell(item),
-                        requiresManualAttention: item.RequiresManualValidation,
-                        yellowAuxBlock: true,
-                        columnFValueOverride: FormatSemesterColumnF(item));
-                }
+                    columnFValueOverride: FormatSemesterColumnF(item));
             }
 
             int volHeadingRows = MeasureNameRowLines("Объем образовательной программы");
