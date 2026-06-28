@@ -12,6 +12,7 @@
 |------|-----------|
 | 2026-06-28 | Parity с DekautoDesktop 1.16.10: DIP-03 (C/D grades), DIP-01/02/04 (layout F), DIP-05 (sync шаблонов), fix `ExportDiploma:Manufacturers` в prod config |
 | 2026-06-28 | Блок «Государственная итоговая аттестация» на листе «Освоение программы» всегда (заголовок + «в том числе:», жёлтый фон); parity DekautoDesktop 1.16.12 |
+| 2026-06-28 | ВКР в ГИА — две строки (заголовок по `educationLevel` + тема); курсовые card-only в блок курсовых; parity DekautoDesktop 1.16.13 + Import.Service |
 
 ### Шаблоны приложения к диплому
 

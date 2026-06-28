@@ -39,22 +39,9 @@ public class ProgramMasteringGiaBlockExportTests
             DiplomaWithHonors = false
         };
 
-        var service = CreateService();
-        var method = typeof(DiplomaSupplementExportService).GetMethod(
-            "FillProgramMasteringSheet",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        Assert.IsNotNull(method);
+        InvokeFillProgramMasteringSheet(sheet, data, "bachelor");
 
-        method!.Invoke(service, new object[] { sheet, data });
-
-        var columnBTexts = new List<string>();
-        var endRow = sheet.Dimension?.End.Row ?? 0;
-        for (int r = 1; r <= endRow; r++)
-        {
-            var t = sheet.Cells[r, 2].Text?.Trim();
-            if (!string.IsNullOrEmpty(t))
-                columnBTexts.Add(t);
-        }
+        var columnBTexts = CollectColumnBTexts(sheet);
 
         Assert.IsTrue(
             columnBTexts.Any(t =>
@@ -63,5 +50,106 @@ public class ProgramMasteringGiaBlockExportTests
         Assert.IsTrue(
             columnBTexts.Any(t => string.Equals(t.Trim(), "в том числе:", StringComparison.OrdinalIgnoreCase)),
             "Ожидалась строка «в том числе:»");
+    }
+
+    [TestMethod]
+    public void FillProgramMasteringSheet_vkr_writes_title_and_topic_on_separate_rows()
+    {
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+        using var package = new ExcelPackage();
+        var sheet = package.Workbook.Worksheets.Add("3 Освоение программы");
+
+        var data = new DiplomaSupplementData
+        {
+            DisciplineResults = new List<StudentDisciplineResult>
+            {
+                new()
+                {
+                    DisciplineName = "Разработка веб-приложения",
+                    ControlType = "защита вкр",
+                    Score = "5",
+                    CreditUnits = 0,
+                    AudHours = 0
+                }
+            },
+            TargetGiaCreditsFromPlan = 9,
+            DiplomaWithHonors = false
+        };
+
+        InvokeFillProgramMasteringSheet(sheet, data, "bachelor");
+
+        var columnBTexts = CollectColumnBTexts(sheet);
+
+        Assert.IsTrue(
+            columnBTexts.Any(t =>
+                t.Contains("бакалаврская работа", StringComparison.OrdinalIgnoreCase)),
+            "Ожидался заголовок ВКР для бакалавриата");
+        Assert.IsTrue(
+            columnBTexts.Any(t => t.Contains("Разработка веб-приложения", StringComparison.OrdinalIgnoreCase)),
+            "Ожидалась тема ВКР на отдельной строке");
+    }
+
+    [TestMethod]
+    public void FillProgramMasteringSheet_card_only_course_work_appears_in_course_block()
+    {
+        ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+
+        using var package = new ExcelPackage();
+        var sheet = package.Workbook.Worksheets.Add("3 Освоение программы");
+
+        var data = new DiplomaSupplementData
+        {
+            DisciplineResults = new List<StudentDisciplineResult>
+            {
+                new()
+                {
+                    DisciplineName = "НАЗВАНИЕ ДИСЦИПЛИНЫ \"Курсовая работа номер 1\"",
+                    ControlType = "Курсовая работа",
+                    Score = "4",
+                    Semester = 3,
+                    IsCardOnlyUnmatchedPlan = true
+                }
+            },
+            DiplomaWithHonors = false
+        };
+
+        InvokeFillProgramMasteringSheet(sheet, data, "bachelor");
+
+        var columnBTexts = CollectColumnBTexts(sheet);
+
+        Assert.IsTrue(
+            columnBTexts.Any(t => t.Contains("Курсовая работа номер 1", StringComparison.OrdinalIgnoreCase)),
+            "Курсовая из карточки должна попасть в блок курсовых");
+        Assert.IsFalse(
+            columnBTexts.Any(t =>
+                t.Contains("Неопределенные записи", StringComparison.OrdinalIgnoreCase)),
+            "Несопоставленная курсовая не должна уходить только в ручной блок");
+    }
+
+    private static void InvokeFillProgramMasteringSheet(
+        OfficeOpenXml.ExcelWorksheet sheet,
+        DiplomaSupplementData data,
+        string? educationLevel)
+    {
+        var service = CreateService();
+        var method = typeof(DiplomaSupplementExportService).GetMethod(
+            "FillProgramMasteringSheet",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.IsNotNull(method);
+        method!.Invoke(service, new object?[] { sheet, data, educationLevel });
+    }
+
+    private static List<string> CollectColumnBTexts(OfficeOpenXml.ExcelWorksheet sheet)
+    {
+        var columnBTexts = new List<string>();
+        var endRow = sheet.Dimension?.End.Row ?? 0;
+        for (int r = 1; r <= endRow; r++)
+        {
+            var t = sheet.Cells[r, 2].Text?.Trim();
+            if (!string.IsNullOrEmpty(t))
+                columnBTexts.Add(t);
+        }
+        return columnBTexts;
     }
 }

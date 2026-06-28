@@ -147,6 +147,14 @@ namespace Dekauto.Export.Service.Domain.Services
             return false;
         }
 
+        private static bool IsCardOnlyGarbageExportPlaceholder(StudentDisciplineResult item)
+        {
+            if (item.ControlType != null &&
+                item.ControlType.IndexOf("курсов", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+            return IsCardOnlyGarbageExportPlaceholder(item.DisciplineName);
+        }
+
         private static bool IsCardOnlyGarbageExportPlaceholder(string? disciplineName)
         {
             if (string.IsNullOrWhiteSpace(disciplineName))
@@ -157,6 +165,55 @@ namespace Dekauto.Export.Service.Domain.Services
             if (t.Contains("Тема курсовой работы", StringComparison.OrdinalIgnoreCase))
                 return true;
             return false;
+        }
+
+        private static bool IsVkrDefenseControlType(string? controlType)
+        {
+            if (string.IsNullOrWhiteSpace(controlType))
+                return false;
+            var c = controlType.ToLowerInvariant();
+            return c.Contains("защита") && c.Contains("вкр");
+        }
+
+        private static bool LooksLikeVkrFinalizationRow(StudentDisciplineResult item) =>
+            IsVkrDefenseControlType(item.ControlType);
+
+        private static string GetVkrTitleLine(string? educationLevel)
+        {
+            var level = educationLevel?.Trim().ToLowerInvariant() ?? "";
+            if (level == "bachelor")
+                return "Выпускная квалификационная работа (бакалаврская работа)";
+            if (level == "master")
+                return "Выпускная квалификационная работа (магистерская диссертация)";
+            return "Выпускная квалификационная работа";
+        }
+
+        private static string TryExtractVkrTopic(string? disciplineName)
+        {
+            if (string.IsNullOrWhiteSpace(disciplineName))
+                return "Тема выпускной квалификационной работы";
+            var t = disciplineName.Trim();
+            if (t.StartsWith("Выпускная квалификационная работа", StringComparison.OrdinalIgnoreCase))
+            {
+                var temaIdx = t.IndexOf("Тема:", StringComparison.OrdinalIgnoreCase);
+                if (temaIdx >= 0)
+                {
+                    var after = t.Substring(temaIdx + 5).Trim();
+                    if (after.StartsWith('"') && after.EndsWith('"') && after.Length > 1)
+                        after = after.Substring(1, after.Length - 2).Trim();
+                    if (!string.IsNullOrWhiteSpace(after))
+                        return after;
+                }
+            }
+            return t;
+        }
+
+        private static string FormatVkrTopicForSupplement(string topic)
+        {
+            topic = topic.Trim();
+            if (topic.Length == 0)
+                topic = "Тема выпускной квалификационной работы";
+            return "\"" + topic + "\"";
         }
 
         private void SetCellValue(string cellAddr, object value)
@@ -298,7 +355,7 @@ namespace Dekauto.Export.Service.Domain.Services
             _logger.LogInformation("Заполнение страницы обладателя завершено.");
 
             _logger.LogInformation($"Начинаем заполнение страницы освоения программы (лист \"{programMasteringSheet.Name}\")...");
-            FillProgramMasteringSheet(programMasteringSheet, data);
+            FillProgramMasteringSheet(programMasteringSheet, data, educationLevel);
             _logger.LogInformation("Заполнение страницы освоения программы завершено.");
 
             if (otherDataSheet != null)
@@ -455,7 +512,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private static double ColumnWidthFromPixels(int pixels) => (pixels - 5) / 7.0;
 
-        private void FillProgramMasteringSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
+        private void FillProgramMasteringSheet(ExcelWorksheet sheet, DiplomaSupplementData data, string? educationLevel)
         {
             activeWorksheet = sheet;
             _logger.LogInformation("Заполнение листа освоения программы...");
@@ -481,18 +538,9 @@ namespace Dekauto.Export.Service.Domain.Services
                 if (IsProgramMasteringNoiseName(item.DisciplineName))
                     continue;
 
-                if (item.IsCardOnlyUnmatchedPlan)
-                {
-                    rawCardOnlyUnmatched.Add(item);
-                    continue;
-                }
-
                 string nameLower = item.DisciplineName?.ToLower()?.Trim() ?? "";
                 string controlLower = item.ControlType?.ToLower()?.Trim() ?? "";
 
-                bool isProjectPractice = nameLower.Contains("проектный практикум");
-
-                // курсовые — как раньше, перекрывает привязку плана при конфликте
                 bool isCourseWork =
                     controlLower.Contains("курсовая") ||
                     nameLower.Contains("курсовая") ||
@@ -503,6 +551,21 @@ namespace Dekauto.Export.Service.Domain.Services
                     rawCourseWorks.Add(item);
                     continue;
                 }
+
+                bool isVkrDefense = controlLower.Contains("защита") && controlLower.Contains("вкр");
+                if (isVkrDefense)
+                {
+                    rawGia.Add(item);
+                    continue;
+                }
+
+                if (item.IsCardOnlyUnmatchedPlan)
+                {
+                    rawCardOnlyUnmatched.Add(item);
+                    continue;
+                }
+
+                bool isProjectPractice = nameLower.Contains("проектный практикум");
 
                 var pb = item.PlanBucket;
 
@@ -574,7 +637,7 @@ namespace Dekauto.Export.Service.Domain.Services
             var giaResults = ProcessDisciplines(rawGia);
             var courseWorks = ProcessDisciplines(rawCourseWorks);
             var cardOnlyTail = ProcessDisciplines(rawCardOnlyUnmatched)
-                .Where(x => !IsCardOnlyGarbageExportPlaceholder(x.DisciplineName))
+                .Where(x => !IsCardOnlyGarbageExportPlaceholder(x))
                 .ToList();
 
             var practicesOutsidePlanCanon = practices
@@ -676,7 +739,7 @@ namespace Dekauto.Export.Service.Domain.Services
             int giaBundle = MeasureNameRowLines("Государственная итоговая аттестация")
                 + MeasureNameRowLines("в том числе:");
             if (giaResults.Any())
-                giaBundle += MeasureNameRowLines(giaResults[0].DisciplineName);
+                giaBundle += MeasureGiaChildRowLines(giaResults[0], educationLevel);
             AdvancePastFirstSheetPrintBandIfNeeded(giaBundle);
 
             WriteDisciplineRow(
@@ -696,6 +759,12 @@ namespace Dekauto.Export.Service.Domain.Services
 
             foreach (var item in giaResults)
             {
+                if (LooksLikeVkrFinalizationRow(item))
+                {
+                    WriteVkrGiaRows(item, educationLevel);
+                    continue;
+                }
+
                 WriteDisciplineRow(
                     item.DisciplineName,
                     FormatCreditsCell(item),
@@ -940,6 +1009,35 @@ namespace Dekauto.Export.Service.Domain.Services
                 ApplyAttentionRowFill(rowStart, rowEnd);
 
             _currentRow += rowsNeeded;
+        }
+
+        private int MeasureGiaChildRowLines(StudentDisciplineResult item, string? educationLevel)
+        {
+            if (LooksLikeVkrFinalizationRow(item))
+                return MeasureNameRowLines(GetVkrTitleLine(educationLevel))
+                       + MeasureNameRowLines(
+                           FormatVkrTopicForSupplement(TryExtractVkrTopic(item.DisciplineName)));
+            return MeasureNameRowLines(item.DisciplineName);
+        }
+
+        private void WriteVkrGiaRows(StudentDisciplineResult item, string? educationLevel)
+        {
+            WriteDisciplineRow(
+                GetVkrTitleLine(educationLevel),
+                null,
+                null,
+                requiresManualAttention: false,
+                yellowAuxBlock: true,
+                skipPageBandAdjustment: true);
+
+            var topicDisplay = FormatVkrTopicForSupplement(TryExtractVkrTopic(item.DisciplineName));
+            WriteDisciplineRow(
+                topicDisplay,
+                FormatCreditsCell(item),
+                FormatGradeCell(item),
+                requiresManualAttention: item.RequiresManualValidation,
+                yellowAuxBlock: true,
+                columnFValueOverride: FormatSemesterColumnF(item));
         }
 
         private void WriteManualReconciliationBanner(string headingText)
