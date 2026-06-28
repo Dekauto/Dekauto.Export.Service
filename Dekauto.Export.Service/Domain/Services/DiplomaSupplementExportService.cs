@@ -221,12 +221,20 @@ namespace Dekauto.Export.Service.Domain.Services
             return (diplomaFile, fileName);
         }
 
+        private string? GetDiplomaExportConfigValue(string key)
+        {
+            var fromSection = _configuration.GetSection("ExportDiploma").GetValue<string>(key);
+            if (!string.IsNullOrEmpty(fromSection))
+                return fromSection;
+            return _configuration.GetValue<string>(key);
+        }
+
         private (string, string, string) ChooseTemplateFile(string manufacturer, string educationLevel)
         {
-            var m = _configuration.GetValue<string>($"Manufacturers:{manufacturer}:path");
-            var m1 = _configuration.GetValue<string>($"Manufacturers:{manufacturer}:name");
-            var e = _configuration.GetValue<string>($"EducationLevels:{educationLevel}:path");
-            var e1 = _configuration.GetValue<string>($"EducationLevels:{educationLevel}:name");
+            var m = GetDiplomaExportConfigValue($"Manufacturers:{manufacturer}:path");
+            var m1 = GetDiplomaExportConfigValue($"Manufacturers:{manufacturer}:name");
+            var e = GetDiplomaExportConfigValue($"EducationLevels:{educationLevel}:path");
+            var e1 = GetDiplomaExportConfigValue($"EducationLevels:{educationLevel}:name");
 
             var templatePath = Path.Combine(Directory.GetCurrentDirectory(), m, e); //Путь шаблона
 
@@ -443,10 +451,17 @@ namespace Dekauto.Export.Service.Domain.Services
             return t;
         }
 
+        private const int ProgramMasteringColumnFPixels = 60;
+
+        private static double ColumnWidthFromPixels(int pixels) => (pixels - 5) / 7.0;
+
         private void FillProgramMasteringSheet(ExcelWorksheet sheet, DiplomaSupplementData data)
         {
             activeWorksheet = sheet;
             _logger.LogInformation("Заполнение листа освоения программы...");
+
+            sheet.Column(6).Width = ColumnWidthFromPixels(ProgramMasteringColumnFPixels);
+            sheet.Cells[1, 6].Value = "За семестр";
 
             // 1. Очистка данных; E — как в шаблоне РИД, формула LEN(B), F — служебные надписи
             sheet.Cells["A2:F140"].Value = null;
@@ -607,7 +622,8 @@ namespace Dekauto.Export.Service.Domain.Services
                     FormatCreditsCell(item),
                     FormatGradeCell(item),
                     requiresManualAttention: item.RequiresManualValidation,
-                    yellowAuxBlock: false);
+                    yellowAuxBlock: false,
+                    columnFValueOverride: FormatSemesterColumnF(item));
             }
 
             if (practicesMain.Any())
@@ -643,7 +659,8 @@ namespace Dekauto.Export.Service.Domain.Services
                         FormatCreditsCell(item),
                         FormatGradeCell(item),
                         requiresManualAttention: item.RequiresManualValidation,
-                        yellowAuxBlock: true);
+                        yellowAuxBlock: true,
+                        columnFValueOverride: FormatSemesterColumnF(item));
                 }
             }
 
@@ -685,7 +702,8 @@ namespace Dekauto.Export.Service.Domain.Services
                         FormatCreditsCell(item),
                         FormatGradeCell(item),
                         requiresManualAttention: item.RequiresManualValidation,
-                        yellowAuxBlock: true);
+                        yellowAuxBlock: true,
+                        columnFValueOverride: FormatSemesterColumnF(item));
                 }
             }
 
@@ -766,7 +784,8 @@ namespace Dekauto.Export.Service.Domain.Services
             foreach (var item in courseWorks)
             {
                 WriteDisciplineRow(item.DisciplineName, FormatCreditsCell(item), FormatGradeCell(item),
-                    requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true);
+                    requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true,
+                    columnFValueOverride: FormatSemesterColumnF(item));
             }
 
             if (electives.Any())
@@ -780,13 +799,14 @@ namespace Dekauto.Export.Service.Domain.Services
                 foreach (var item in electives)
                 {
                     WriteDisciplineRow(item.DisciplineName, FormatCreditsCell(item), FormatGradeCell(item),
-                        requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true);
+                        requiresManualAttention: item.RequiresManualValidation, yellowAuxBlock: true,
+                        columnFValueOverride: FormatSemesterColumnF(item));
                 }
             }
 
             if (manualReconciliationRows.Any())
             {
-                _currentRow += 2;
+                _currentRow += 3;
                 WriteManualReconciliationBanner(
                     "Неопределенные записи, требующие ручной проверки:");
                 foreach (var item in manualReconciliationRows.OrderBy(x => x.DisciplineName, StringComparer.OrdinalIgnoreCase))
@@ -797,7 +817,8 @@ namespace Dekauto.Export.Service.Domain.Services
                         FormatGradeCell(item),
                         requiresManualAttention: true,
                         yellowAuxBlock: true,
-                        columnATextOverride: "!");
+                        columnATextOverride: "!",
+                        columnFValueOverride: FormatSemesterColumnF(item));
                 }
             }
 
@@ -854,6 +875,13 @@ namespace Dekauto.Export.Service.Domain.Services
                 .ToList();
         }
 
+        private static object? FormatSemesterColumnF(StudentDisciplineResult item)
+        {
+            if (!item.Semester.HasValue)
+                return null;
+            return item.Semester.Value.ToString(CultureInfo.InvariantCulture);
+        }
+
         /// <summary>
         /// Запись строки данных (или заголовка) в таблицу.
         /// Колонка E — формула LEN(B…) как в шаблоне РИД; F может быть пустая до служебных строк.
@@ -865,7 +893,8 @@ namespace Dekauto.Export.Service.Domain.Services
             bool requiresManualAttention,
             bool yellowAuxBlock,
             bool skipPageBandAdjustment = false,
-            string? columnATextOverride = null)
+            string? columnATextOverride = null,
+            object? columnFValueOverride = null)
         {
             if (string.IsNullOrWhiteSpace(name)) return;
 
@@ -902,6 +931,8 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     SetCellValue(currentRowToWrite, 3, creditsValue);
                     SetCellValue(currentRowToWrite, 4, gradeValue);
+                    if (columnFValueOverride != null)
+                        SetCellValue(currentRowToWrite, 6, columnFValueOverride);
                 }
             }
 
@@ -1023,10 +1054,7 @@ namespace Dekauto.Export.Service.Domain.Services
 
         private string? FormatCreditsCell(StudentDisciplineResult item)
         {
-            var baseText = FormatCredits(item.CreditUnits);
-            if (!item.RequiresManualValidation)
-                return baseText;
-            return (baseText ?? Xmark) + ManualReviewTail;
+            return FormatCredits(item.CreditUnits);
         }
 
         private string? FormatGradeCell(StudentDisciplineResult item)
@@ -1039,13 +1067,27 @@ namespace Dekauto.Export.Service.Domain.Services
             return (baseText ?? Xmark) + ManualReviewTail;
         }
 
+        private static string NormalizeScoreForGradeParsing(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return "";
+            var s = raw.Replace('\u00A0', ' ').Trim();
+            if (s.Contains(',') && !s.Contains('.'))
+                s = s.Replace(",", ".");
+            return s.Trim();
+        }
+
         private string? GetGradeTextCore(StudentDisciplineResult result)
         {
-            string scoreStr = result.Score?.ToString()?.Trim() ?? "";
-            string controlType = result.ControlType?.ToLower()?.Trim() ?? "";
+            string scoreStr = NormalizeScoreForGradeParsing(result.Score);
+            string controlRaw = result.ControlType?.Replace('\u00A0', ' ')?.Trim() ?? "";
+            string controlType = controlRaw.ToLower();
 
-            // 1. Зачет: только 15 / 0 и каноничные подписи, иначе проверка (без тихого "зачтено")
-            if (controlType == "зачёт" || controlType == "зачет")
+            bool isBarePassFailZach =
+                controlType.Equals("зачёт", StringComparison.OrdinalIgnoreCase) ||
+                controlType.Equals("зачет", StringComparison.OrdinalIgnoreCase);
+
+            if (isBarePassFailZach)
             {
                 if (scoreStr.Equals("зачтено", StringComparison.OrdinalIgnoreCase))
                     return "зачтено";
@@ -1055,14 +1097,15 @@ namespace Dekauto.Export.Service.Domain.Services
                 {
                     if (Math.Abs(zachScore - 15d) < 0.0001d) return "зачтено";
                     if (Math.Abs(zachScore) < 0.0001d) return "не зачтено";
+                    if (zachScore > 1d && zachScore <= 15d) return MapNumericScore(zachScore);
                 }
+
                 if (string.IsNullOrEmpty(scoreStr))
                     return Xmark;
                 _logger.LogWarning($"Нераспознанное значение оценки (зачёт): \"{scoreStr}\". Требуется проверка оператора.");
                 return "ТРЕБУЕТ ПРОВЕРКИ";
             }
 
-            // 2. Оценка (Экзамен, Диф.зачет, Курсовая) — числа 1..15 и т.д.
             if (double.TryParse(scoreStr, NumberStyles.Any, CultureInfo.InvariantCulture, out double scoreNum))
             {
                 if (scoreNum < 0d || scoreNum > 15d)
@@ -1073,7 +1116,6 @@ namespace Dekauto.Export.Service.Domain.Services
                 return MapNumericScore(scoreNum);
             }
 
-            // 3. Уже текст — только каноничные подписи, остальное на ручную проверку
             if (!string.IsNullOrEmpty(scoreStr))
             {
                 if (KnownTextGradeMap.TryGetValue(scoreStr, out var mapped)) return mapped;
