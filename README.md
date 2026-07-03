@@ -6,6 +6,31 @@
 - Заполнение Excel-файлов данными (+ формирование ZIP-архива)
 - Отправка результата ответом на запрос
 
+### Changelog (supplement export)
+
+| Дата | Изменение |
+|------|-----------|
+| 2026-06-28 | Parity с DekautoDesktop 1.16.10: DIP-03 (C/D grades), DIP-01/02/04 (layout F), DIP-05 (sync шаблонов), fix `ExportDiploma:Manufacturers` в prod config |
+| 2026-06-28 | Блок «Государственная итоговая аттестация» на листе «Освоение программы» всегда (заголовок + «в том числе:», жёлтый фон); parity DekautoDesktop 1.16.12 |
+| 2026-06-28 | ВКР в ГИА — две строки (заголовок по `educationLevel` + тема); курсовые card-only в блок курсовых; parity DekautoDesktop 1.16.13 + Import.Service |
+
+### Шаблоны приложения к диплому
+
+Источник истины: `DekautoDesktop/Templates/diploma_supplement/` (12 файлов: kirzhach/saratov/sbm × bachelor, bachelor_2_page, specialist, master).
+
+Копирование в сервис:
+
+```powershell
+$src = "..\DekautoDesktop\Templates\diploma_supplement"
+$dst = "Dekauto.Export.Service\Templates\diploma_supplement"
+Get-ChildItem $src -Recurse -Filter *.xlsx | ForEach-Object {
+  $rel = $_.FullName.Substring($src.Length + 1)
+  Copy-Item $_.FullName (Join-Path $dst $rel) -Force
+}
+```
+
+После sync — SHA256 всех 12 пар Desktop ↔ Export.
+
 ### 🛠 Технологии
 - .NET 8 (ASP.NET Core 8)
 - OpenAPI Swagger
